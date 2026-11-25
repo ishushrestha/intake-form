@@ -29,7 +29,14 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function json(status: number, body: unknown, headers?: Record<string, string>) {
-  return HttpServerResponse.jsonUnsafe(body, { status, headers });
+  // Leave Content-Length unset. Effect would store it as a string, and Node's
+  // strictContentLength check compares that string to the numeric byte count
+  // with !==, so matching lengths still throw on some Node 22 releases.
+  return HttpServerResponse.raw(JSON.stringify(body), {
+    status,
+    contentType: "application/json",
+    headers,
+  });
 }
 
 function errorBody(
@@ -324,9 +331,9 @@ const imageRoute = HttpRouter.add(
         return notFound();
       }
       const filename = image.filename.replaceAll('"', "");
-      return HttpServerResponse.uint8Array(image.bytes, {
+      return HttpServerResponse.raw(image.bytes, {
+        contentType: image.mimeType,
         headers: {
-          "content-type": image.mimeType,
           "x-content-type-options": "nosniff",
           "cache-control": "private, no-store",
           "content-disposition": `inline; filename="${filename}"`,
