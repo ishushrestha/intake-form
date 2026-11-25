@@ -24,6 +24,8 @@ CREATE INDEX IF NOT EXISTS submissions_status_created_at
   ON submissions (status, created_at DESC)`,
 ];
 
+const REVIEW_COLUMNS = ["verified_at", "rejected_at", "approved_at"] as const;
+
 export class Database extends Context.Service<
   Database,
   {
@@ -36,11 +38,22 @@ export const DatabaseLive = Layer.effect(
   Effect.gen(function* () {
     const config = yield* AppConfigService;
     const client: Client = createClient({ url: config.databaseUrl });
-    for (const statement of MIGRATIONS) {
-      yield* Effect.tryPromise({
+    const executeStatement = (statement: string) =>
+      Effect.tryPromise({
         try: () => client.execute(statement),
         catch: (cause) => new StorageError({ cause }),
       });
+
+    for (const statement of MIGRATIONS) {
+      yield* executeStatement(statement);
+    }
+
+    const info = yield* executeStatement("PRAGMA table_info(submissions)");
+    const existing = new Set(info.rows.map((row) => String(row.name)));
+    for (const column of REVIEW_COLUMNS) {
+      if (!existing.has(column)) {
+        yield* executeStatement(`ALTER TABLE submissions ADD COLUMN ${column} TEXT`);
+      }
     }
     yield* Effect.addFinalizer(() => Effect.sync(() => client.close()));
 

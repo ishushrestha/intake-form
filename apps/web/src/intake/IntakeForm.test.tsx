@@ -19,6 +19,9 @@ const submission = {
   },
   createdAt: "2026-11-25T00:00:00.000Z",
   updatedAt: "2026-11-25T00:00:00.000Z",
+  verifiedAt: null,
+  rejectedAt: null,
+  approvedAt: null,
 };
 
 function renderForm() {

@@ -20,8 +20,30 @@ const handlerPromise = Promise.resolve(
     databaseUrl,
     uploadDir,
     webOrigin: "http://localhost:5173",
+    adminPassword: "test-password",
+    sessionSecret: "test-session-secret",
   }),
 );
+
+async function adminCookie(): Promise<string> {
+  const { handler } = await handlerPromise;
+  const response = await handler(
+    new Request("http://localhost/api/admin/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "test-password" }),
+    }),
+  );
+  if (response.status !== 200) {
+    throw new Error(`Admin login failed with ${response.status}`);
+  }
+  const setCookie = response.headers.get("set-cookie");
+  const pair = setCookie?.split(";")[0];
+  if (pair === undefined || pair.length === 0) {
+    throw new Error("Admin login did not set a session cookie");
+  }
+  return pair;
+}
 
 async function postForm(fields: Record<string, string | File>): Promise<Response> {
   const { handler } = await handlerPromise;
@@ -98,16 +120,19 @@ describe("POST /api/submissions", () => {
     expect(readFileSync(storedPath).equals(PNG)).toBe(true);
 
     const { handler } = await handlerPromise;
-    const listed = await handler(new Request("http://localhost/api/submissions"));
+    const cookie = await adminCookie();
+    const listed = await handler(new Request("http://localhost/api/submissions", { headers: { cookie } }));
     expect(listed.status).toBe(200);
     const listBody = (await listed.json()) as { submissions: Array<{ id: string }> };
     expect(listBody.submissions.some((submission) => submission.id === body.id)).toBe(true);
 
-    const fetched = await handler(new Request(`http://localhost/api/submissions/${body.id}`));
+    const fetched = await handler(
+      new Request(`http://localhost/api/submissions/${body.id}`, { headers: { cookie } }),
+    );
     expect(fetched.status).toBe(200);
 
     const imageResponse = await handler(
-      new Request(`http://localhost/api/submissions/${body.id}/image`),
+      new Request(`http://localhost/api/submissions/${body.id}/image`, { headers: { cookie } }),
     );
     expect(imageResponse.status).toBe(200);
     expect(imageResponse.headers.get("content-type")).toBe("image/png");

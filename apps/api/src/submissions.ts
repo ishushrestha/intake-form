@@ -2,14 +2,16 @@ import { randomUUID } from "node:crypto";
 import type { Row } from "@libsql/client";
 import {
   imageMimeTypeSchema,
+  nextStatus,
   submissionSchema,
   type ImageMimeType,
+  type ReviewAction,
   type Submission,
   type SubmissionStatus,
 } from "@intake/contracts";
 import { Context, Effect, FileSystem, Layer, Path } from "effect";
 import { Database } from "./db.js";
-import { StorageError } from "./errors.js";
+import { StorageError, TransitionError } from "./errors.js";
 import { AppConfigService } from "./services.js";
 
 export interface NewSubmission {
@@ -35,9 +37,16 @@ export class Submissions extends Context.Service<
   Submissions,
   {
     readonly create: (input: NewSubmission) => Effect.Effect<Submission, StorageError>;
-    readonly list: (status?: SubmissionStatus) => Effect.Effect<readonly Submission[], StorageError>;
+    readonly list: (filter?: {
+      readonly status?: SubmissionStatus;
+      readonly query?: string;
+    }) => Effect.Effect<readonly Submission[], StorageError>;
     readonly get: (id: string) => Effect.Effect<Submission | undefined, StorageError>;
     readonly readImage: (id: string) => Effect.Effect<StoredImage | undefined, StorageError>;
+    readonly transition: (
+      id: string,
+      action: ReviewAction,
+    ) => Effect.Effect<Submission | undefined, StorageError | TransitionError>;
   }
 >()("intake/Submissions") {}
 
@@ -45,7 +54,7 @@ const SELECT_LIST = `
   SELECT
     id, first_name, last_name, address, external_id, status,
     image_filename, image_mime_type, image_size_bytes, image_storage_path,
-    created_at, updated_at
+    created_at, updated_at, verified_at, rejected_at, approved_at
   FROM submissions
 `;
 
@@ -66,6 +75,17 @@ function requireNumber(row: Row, key: string): number | StorageError {
     return Number(value);
   }
   return new StorageError({ cause: `Expected a number in ${key}` });
+}
+
+function optionalTimestamp(row: Row, key: string): string | null | StorageError {
+  const value = row[key];
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  return new StorageError({ cause: `Expected a timestamp in ${key}` });
 }
 
 function takeString(value: string | StorageError): string {
@@ -91,6 +111,9 @@ function toSubmission(row: Row): Submission | StorageError {
       },
       createdAt: takeString(requireString(row, "created_at")),
       updatedAt: takeString(requireString(row, "updated_at")),
+      verifiedAt: takeOptional(optionalTimestamp(row, "verified_at")),
+      rejectedAt: takeOptional(optionalTimestamp(row, "rejected_at")),
+      approvedAt: takeOptional(optionalTimestamp(row, "approved_at")),
     });
     if (!parsed.success) {
       return new StorageError({ cause: parsed.error });
@@ -99,6 +122,13 @@ function toSubmission(row: Row): Submission | StorageError {
   } catch (cause) {
     return cause instanceof StorageError ? cause : new StorageError({ cause });
   }
+}
+
+function takeOptional(value: string | null | StorageError): string | null {
+  if (value instanceof StorageError) {
+    throw value;
+  }
+  return value;
 }
 
 function takeStringNumber(value: number | StorageError): number {
@@ -194,18 +224,33 @@ export const SubmissionsLive = Layer.effect(
             },
             createdAt: now,
             updatedAt: now,
+            verifiedAt: null,
+            rejectedAt: null,
+            approvedAt: null,
           });
           if (!submission.success) {
             return yield* Effect.fail(new StorageError({ cause: submission.error }));
           }
           return submission.data;
         }),
-      list: (status) =>
+      list: (filter) =>
         Effect.gen(function* () {
-          const rows =
-            status === undefined
-              ? yield* rowsOf(`${SELECT_LIST} ORDER BY created_at DESC`)
-              : yield* rowsOf(`${SELECT_LIST} WHERE status = ? ORDER BY created_at DESC`, [status]);
+          const status = filter?.status;
+          const query = filter?.query?.trim() ?? "";
+          const pattern = `%${query.toLowerCase().replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
+          const rows = yield* rowsOf(
+            `${SELECT_LIST}
+             WHERE (? = '' OR status = ?)
+               AND (
+                 ? = ''
+                 OR lower(first_name) LIKE ? ESCAPE '\\'
+                 OR lower(last_name) LIKE ? ESCAPE '\\'
+                 OR lower(first_name || ' ' || last_name) LIKE ? ESCAPE '\\'
+                 OR lower(external_id) LIKE ? ESCAPE '\\'
+               )
+             ORDER BY created_at DESC`,
+            [status ?? "", status ?? "", query, pattern, pattern, pattern, pattern],
+          );
           const submissions: Submission[] = [];
           for (const row of rows) {
             const submission = toSubmission(row);
@@ -260,6 +305,46 @@ export const SubmissionsLive = Layer.effect(
             .pipe(Effect.mapError((cause) => new StorageError({ cause })));
           return { bytes, mimeType: parsedMime.data, filename };
         }).pipe(Effect.mapError(failStorage)),
+      transition: (id, action) =>
+        Effect.gen(function* () {
+          const rows = yield* rowsOf(`${SELECT_LIST} WHERE id = ?`, [id]);
+          const row = rows[0];
+          if (row === undefined) {
+            return undefined;
+          }
+          const current = toSubmission(row);
+          if (current instanceof StorageError) {
+            return yield* Effect.fail(current);
+          }
+          const status = nextStatus(current.status, action);
+          if (status === undefined) {
+            return yield* Effect.fail(new TransitionError({ from: current.status, action }));
+          }
+          const now = new Date().toISOString();
+          const verifiedAt = status === "verified" ? now : current.verifiedAt;
+          const rejectedAt = status === "rejected" ? now : current.rejectedAt;
+          const approvedAt = status === "approved" ? now : current.approvedAt;
+          yield* database.execute(
+            `
+            UPDATE submissions
+            SET status = ?, updated_at = ?, verified_at = ?, rejected_at = ?, approved_at = ?
+            WHERE id = ? AND status = ?
+            `,
+            [status, now, verifiedAt, rejectedAt, approvedAt, id, current.status],
+          );
+          const updated = submissionSchema.safeParse({
+            ...current,
+            status,
+            updatedAt: now,
+            verifiedAt,
+            rejectedAt,
+            approvedAt,
+          });
+          if (!updated.success) {
+            return yield* Effect.fail(new StorageError({ cause: updated.error }));
+          }
+          return updated.data;
+        }),
     };
   }),
 );

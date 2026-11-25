@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 
@@ -6,6 +7,10 @@ export interface AppConfig {
   readonly databaseUrl: string;
   readonly uploadDir: string;
   readonly webOrigin: string;
+  /** Shared admin password. Undefined when admin login is not configured. */
+  readonly adminPassword: string | undefined;
+  /** HMAC key for the admin session cookie. */
+  readonly sessionSecret: string;
 }
 
 function loadEnvFile(): void {
@@ -70,10 +75,15 @@ export function loadConfig(): AppConfig {
   }
   mkdirSync(uploadDir, { recursive: true });
 
+  const adminPassword = process.env.ADMIN_PASSWORD?.trim();
+  const sessionSecret = process.env.SESSION_SECRET?.trim();
+
   return {
     port: readPort(process.env.PORT),
     databaseUrl,
     uploadDir,
     webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:5173",
+    adminPassword: adminPassword === undefined || adminPassword.length === 0 ? undefined : adminPassword,
+    sessionSecret: sessionSecret === undefined || sessionSecret.length === 0 ? randomBytes(32).toString("base64url") : sessionSecret,
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSubmissionFieldsSchema, submissionSchema } from "./submission.js";
+import { createSubmissionFieldsSchema, nextStatus, submissionSchema } from "./submission.js";
 
 describe("createSubmissionFieldsSchema", () => {
   it("trims names and the external id", () => {
@@ -49,8 +49,26 @@ describe("submissionSchema", () => {
       },
       createdAt: "2026-11-25T00:00:00.000Z",
       updatedAt: "2026-11-25T00:00:00.000Z",
+      verifiedAt: null,
+      rejectedAt: null,
+      approvedAt: null,
     });
 
     expect(submission.status).toBe("pending");
+  });
+});
+
+describe("nextStatus", () => {
+  it("allows pending to verified or rejected, and verified to approved", () => {
+    expect(nextStatus("pending", "verify")).toBe("verified");
+    expect(nextStatus("pending", "reject")).toBe("rejected");
+    expect(nextStatus("verified", "approve")).toBe("approved");
+  });
+
+  it("refuses skipping ahead or leaving a terminal status", () => {
+    expect(nextStatus("pending", "approve")).toBeUndefined();
+    expect(nextStatus("verified", "reject")).toBeUndefined();
+    expect(nextStatus("rejected", "approve")).toBeUndefined();
+    expect(nextStatus("approved", "verify")).toBeUndefined();
   });
 });

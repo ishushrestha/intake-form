@@ -7,6 +7,7 @@ import {
   submissionStatusSchema,
   type ApiErrorBody,
   type ImageMimeType,
+  type ReviewAction,
 } from "@intake/contracts";
 import { ByteSize, Effect, FileSystem, Layer } from "effect";
 import {
@@ -16,17 +17,19 @@ import {
   HttpServerResponse,
   Multipart,
 } from "effect/http";
+import { ADMIN_COOKIE, AdminAuth, AdminAuthLive } from "./auth.js";
+import { approveSubmission } from "./approve.js";
 import type { AppConfig } from "./config.js";
 import { DatabaseLive } from "./db.js";
-import { StorageError } from "./errors.js";
+import { StorageError, TransitionError } from "./errors.js";
 import { AppConfigService } from "./services.js";
 import { Submissions, SubmissionsLive } from "./submissions.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function json(status: number, body: unknown) {
-  return HttpServerResponse.jsonUnsafe(body, { status });
+function json(status: number, body: unknown, headers?: Record<string, string>) {
+  return HttpServerResponse.jsonUnsafe(body, { status, headers });
 }
 
 function errorBody(
@@ -48,6 +51,20 @@ function notFound() {
 function internalError() {
   return json(500, errorBody("internal_error", "Something went wrong while saving the submission."));
 }
+
+function unauthorized() {
+  return json(401, errorBody("unauthorized", "Sign in to review submissions."));
+}
+
+function conflict() {
+  return json(409, errorBody("conflict", "That status change is not allowed."));
+}
+
+const ensureAdmin = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const auth = yield* AdminAuth;
+  return auth.isAuthenticated(request.cookies[ADMIN_COOKIE]);
+});
 
 function textField(form: Multipart.Persisted, key: string): string {
   const value = form[key];
@@ -241,10 +258,14 @@ const listRoute = HttpRouter.add(
   "/api/submissions",
   recover(
     Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const statusRaw = requestUrl(request).searchParams.get("status");
+      const url = requestUrl(request);
+      const statusRaw = url.searchParams.get("status");
       let status: ReturnType<typeof submissionStatusSchema.parse> | undefined;
-      if (statusRaw !== null) {
+      if (statusRaw !== null && statusRaw.length > 0) {
         const parsed = submissionStatusSchema.safeParse(statusRaw);
         if (!parsed.success) {
           return validation({
@@ -253,8 +274,9 @@ const listRoute = HttpRouter.add(
         }
         status = parsed.data;
       }
+      const query = url.searchParams.get("q") ?? undefined;
       const submissions = yield* Submissions;
-      const rows = yield* submissions.list(status);
+      const rows = yield* submissions.list({ status, query });
       return json(200, { submissions: rows });
     }),
   ),
@@ -265,6 +287,9 @@ const getRoute = HttpRouter.add(
   "/api/submissions/:id",
   recover(
     Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
       const params = yield* HttpRouter.params;
       const id = routeId(params);
       if (id === undefined) {
@@ -285,6 +310,9 @@ const imageRoute = HttpRouter.add(
   "/api/submissions/:id/image",
   recover(
     Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
       const params = yield* HttpRouter.params;
       const id = routeId(params);
       if (id === undefined) {
@@ -300,7 +328,7 @@ const imageRoute = HttpRouter.add(
         headers: {
           "content-type": image.mimeType,
           "x-content-type-options": "nosniff",
-          "cache-control": "private, max-age=3600",
+          "cache-control": "private, no-store",
           "content-disposition": `inline; filename="${filename}"`,
         },
       });
@@ -308,12 +336,149 @@ const imageRoute = HttpRouter.add(
   ),
 );
 
+const applyReview = (id: string, action: ReviewAction) =>
+  Effect.gen(function* () {
+    const submissions = yield* Submissions;
+    const result =
+      action === "approve"
+        ? yield* approveSubmission(submissions, id).pipe(catchTransition)
+        : yield* submissions.transition(id, action).pipe(catchTransition);
+    if (result === "conflict") {
+      return conflict();
+    }
+    if (result === undefined) {
+      return notFound();
+    }
+    return json(200, result);
+  });
+
+const catchTransition = <A, R>(effect: Effect.Effect<A, StorageError | TransitionError, R>) =>
+  effect.pipe(
+    Effect.catch((error) => {
+      if (error instanceof TransitionError) {
+        return Effect.succeed("conflict" as const);
+      }
+      return Effect.fail(error);
+    }),
+  );
+
+const verifyRoute = HttpRouter.add(
+  "POST",
+  "/api/submissions/:id/verify",
+  recover(
+    Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
+      const id = routeId(yield* HttpRouter.params);
+      if (id === undefined) {
+        return notFound();
+      }
+      return yield* applyReview(id, "verify");
+    }),
+  ),
+);
+
+const rejectRoute = HttpRouter.add(
+  "POST",
+  "/api/submissions/:id/reject",
+  recover(
+    Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
+      const id = routeId(yield* HttpRouter.params);
+      if (id === undefined) {
+        return notFound();
+      }
+      return yield* applyReview(id, "reject");
+    }),
+  ),
+);
+
+const approveRoute = HttpRouter.add(
+  "POST",
+  "/api/submissions/:id/approve",
+  recover(
+    Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
+      const id = routeId(yield* HttpRouter.params);
+      if (id === undefined) {
+        return notFound();
+      }
+      return yield* applyReview(id, "approve");
+    }),
+  ),
+);
+
+const loginRoute = HttpRouter.add(
+  "POST",
+  "/api/admin/login",
+  recover(
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const raw = yield* request.text.pipe(
+        Effect.provideService(HttpIncomingMessage.MaxBodySize)(ByteSize.bytes(4 * 1024)),
+      );
+      let password = "";
+      try {
+        const parsed = JSON.parse(raw) as { password?: unknown };
+        password = typeof parsed.password === "string" ? parsed.password : "";
+      } catch {
+        return validation({ password: "Enter the admin password." });
+      }
+      const auth = yield* AdminAuth;
+      const result = yield* auth.login(password);
+      if (!result.ok && result.reason === "rate_limited") {
+        return json(429, errorBody("rate_limited", "Too many attempts. Wait a few minutes and try again."), {
+          "retry-after": "900",
+        });
+      }
+      if (!result.ok && result.reason === "unconfigured") {
+        return json(503, errorBody("unavailable", "Admin login is not configured."));
+      }
+      if (!result.ok) {
+        return json(401, errorBody("unauthorized", "That password is not correct."));
+      }
+      return json(200, { authenticated: true }, { "set-cookie": result.setCookie });
+    }),
+  ),
+);
+
+const logoutRoute = HttpRouter.add(
+  "POST",
+  "/api/admin/logout",
+  recover(
+    Effect.gen(function* () {
+      const auth = yield* AdminAuth;
+      return json(200, { authenticated: false }, { "set-cookie": auth.logoutCookie() });
+    }),
+  ),
+);
+
+const sessionRoute = HttpRouter.add(
+  "GET",
+  "/api/admin/session",
+  recover(
+    Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
+      return json(200, { authenticated: true });
+    }),
+  ),
+);
+
 export const makeRoutes = (config: AppConfig) => {
+  const configLayer = Layer.succeed(AppConfigService, config);
   const submissions = SubmissionsLive.pipe(
     Layer.provide(DatabaseLive),
-    Layer.provide(Layer.succeed(AppConfigService, config)),
+    Layer.provide(configLayer),
     Layer.provide(NodeServices.layer),
   );
+  const auth = AdminAuthLive.pipe(Layer.provide(configLayer));
 
   return Layer.mergeAll(
     healthRoute,
@@ -321,11 +486,21 @@ export const makeRoutes = (config: AppConfig) => {
     listRoute,
     getRoute,
     imageRoute,
+    verifyRoute,
+    rejectRoute,
+    approveRoute,
+    loginRoute,
+    logoutRoute,
+    sessionRoute,
     HttpRouter.cors({
       allowedOrigins: [config.webOrigin],
       allowedMethods: ["GET", "POST"],
       allowedHeaders: ["content-type"],
       maxAge: 600,
     }),
-  ).pipe(HttpRouter.provideRequest(submissions), HttpRouter.provideRequest(NodeServices.layer));
+  ).pipe(
+    HttpRouter.provideRequest(submissions),
+    HttpRouter.provideRequest(auth),
+    HttpRouter.provideRequest(NodeServices.layer),
+  );
 };

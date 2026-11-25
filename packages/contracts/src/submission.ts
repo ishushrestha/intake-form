@@ -82,6 +82,28 @@ export const submissionImageSchema = z.object({
 
 export type SubmissionImage = z.infer<typeof submissionImageSchema>;
 
+export const reviewActions = ["verify", "reject", "approve"] as const;
+
+export const reviewActionSchema = z.enum(reviewActions);
+
+export type ReviewAction = z.infer<typeof reviewActionSchema>;
+
+/** Returns the next status, or undefined when the action is not allowed. */
+export function nextStatus(current: SubmissionStatus, action: ReviewAction): SubmissionStatus | undefined {
+  if (current === "pending" && action === "verify") {
+    return "verified";
+  }
+  if (current === "pending" && action === "reject") {
+    return "rejected";
+  }
+  if (current === "verified" && action === "approve") {
+    return "approved";
+  }
+  return undefined;
+}
+
+const timestampSchema = z.iso.datetime().nullable();
+
 export const submissionSchema = z.object({
   id: z.uuid(),
   firstName: z.string(),
@@ -92,6 +114,9 @@ export const submissionSchema = z.object({
   image: submissionImageSchema,
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+  verifiedAt: timestampSchema,
+  rejectedAt: timestampSchema,
+  approvedAt: timestampSchema,
 });
 
 export type Submission = z.infer<typeof submissionSchema>;
@@ -102,7 +127,15 @@ export const submissionListSchema = z.object({
 
 export type SubmissionList = z.infer<typeof submissionListSchema>;
 
-export const apiErrorCodes = ["validation_error", "not_found", "internal_error"] as const;
+export const apiErrorCodes = [
+  "validation_error",
+  "not_found",
+  "internal_error",
+  "unauthorized",
+  "conflict",
+  "rate_limited",
+  "unavailable",
+] as const;
 
 export const apiErrorSchema = z.object({
   error: z.enum(apiErrorCodes),

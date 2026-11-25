@@ -1,6 +1,11 @@
+import { Link, Navigate, Route, Routes } from "react-router";
+import { AdminDetailPage } from "@/admin/AdminDetailPage";
+import { AdminGuard } from "@/admin/AdminGuard";
+import { AdminListPage } from "@/admin/AdminListPage";
+import { AdminLoginPage } from "@/admin/AdminLoginPage";
 import { IntakeForm } from "@/intake/IntakeForm";
 
-export function App() {
+function PublicIntakePage() {
   return (
     <div className="min-h-svh">
       <div className="mx-auto grid max-w-5xl gap-10 px-6 py-12 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:items-start lg:py-20">
@@ -28,11 +33,40 @@ export function App() {
               The record ID is how an approved submission finds its record.
             </li>
           </ol>
+          <Link className="inline-block text-sm text-muted-foreground underline-offset-4 hover:underline" to="/admin">
+            Admin review
+          </Link>
         </header>
         <section className="rounded-xl border border-border bg-card p-6 shadow-sm sm:p-8">
           <IntakeForm />
         </section>
       </div>
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <Routes>
+      <Route element={<PublicIntakePage />} path="/" />
+      <Route element={<AdminLoginPage />} path="/admin/login" />
+      <Route
+        element={
+          <AdminGuard>
+            <AdminListPage />
+          </AdminGuard>
+        }
+        path="/admin"
+      />
+      <Route
+        element={
+          <AdminGuard>
+            <AdminDetailPage />
+          </AdminGuard>
+        }
+        path="/admin/submissions/:id"
+      />
+      <Route element={<Navigate replace to="/" />} path="*" />
+    </Routes>
   );
 }
