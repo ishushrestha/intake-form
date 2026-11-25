@@ -1,5 +1,4 @@
 import type { Submission } from "@intake/contracts";
-import type { MouseEvent } from "react";
 import { formatTimestamp } from "@/admin/status";
 import { AdminShell } from "@/components/admin/AdminShell";
 import { StatusBadge } from "@/components/admin/StatusBadge";
@@ -18,29 +17,15 @@ export interface AdminDetailViewProps {
   readonly onLogout: () => void;
 }
 
-function isPlainLeftClick(event: MouseEvent<HTMLAnchorElement>): boolean {
-  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
-}
-
 export function AdminDetailView(props: AdminDetailViewProps) {
   const submission = props.submission;
 
   return (
     <AdminShell onGoHome={props.onGoHome} onLogout={props.onLogout}>
       <div className="space-y-6">
-        <a
-          className="text-sm text-muted-foreground underline-offset-4 hover:underline"
-          href="/admin"
-          onClick={(event) => {
-            if (!isPlainLeftClick(event)) {
-              return;
-            }
-            event.preventDefault();
-            props.onBack();
-          }}
-        >
+        <Button onClick={props.onBack} type="button" variant="outline">
           Back to submissions
-        </a>
+        </Button>
         {props.isLoading || submission === undefined ? (
           <p className="text-muted-foreground">{props.error ?? "Loading submission…"}</p>
         ) : (

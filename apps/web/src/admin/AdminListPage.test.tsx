@@ -47,11 +47,11 @@ function installFetch() {
   );
 }
 
-function renderAdmin() {
+function renderAdmin(path = "/admin") {
   const client = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
-  window.history.pushState({}, "", "/admin");
+  window.history.pushState({}, "", path);
   return render(
     <QueryClientProvider client={client}>
       <BrowserRouter>
@@ -78,7 +78,7 @@ describe("admin list navigation", () => {
     expect(screen.getByRole("heading", { name: "Katherine Johnson" })).toBeInTheDocument();
     expect(window.location.pathname).toBe(`/admin/submissions/${submission.id}`);
 
-    await user.click(screen.getByRole("link", { name: "Back to submissions" }));
+    await user.click(screen.getByRole("button", { name: "Back to submissions" }));
     expect(await screen.findByRole("heading", { name: "Submissions" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/admin");
   });
@@ -92,7 +92,7 @@ describe("admin list navigation", () => {
     expect(await screen.findByRole("button", { name: "Mark verified" })).toBeInTheDocument();
     expect(window.location.pathname).toBe(`/admin/submissions/${submission.id}`);
 
-    await user.click(screen.getByRole("link", { name: "Back to submissions" }));
+    await user.click(screen.getByRole("button", { name: "Back to submissions" }));
     await screen.findByRole("heading", { name: "Submissions" });
 
     const row = screen.getByRole("row", { name: /rec_admin_2/ });
@@ -100,5 +100,29 @@ describe("admin list navigation", () => {
     await user.keyboard("{Enter}");
     expect(await screen.findByRole("button", { name: "Mark verified" })).toBeInTheDocument();
     expect(window.location.pathname).toBe(`/admin/submissions/${submission.id}`);
+  });
+
+  it("shows Back to submissions when the submission cannot be loaded", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("/api/admin/session")) {
+          return json({ authenticated: true });
+        }
+        if (url.includes("/api/submissions")) {
+          return json({ error: "not_found", message: "No submission exists with that id." }, 404);
+        }
+        return json({ error: "not_found", message: "missing" }, 404);
+      }),
+    );
+    renderAdmin(`/admin/submissions/${submission.id}`);
+
+    const back = await screen.findByRole("button", { name: "Back to submissions" });
+    expect(await screen.findByText("Could not load that submission.")).toBeInTheDocument();
+    await user.click(back);
+    expect(await screen.findByRole("heading", { name: "Submissions" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/admin");
   });
 });
