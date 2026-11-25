@@ -1,6 +1,6 @@
 # Intake
 
-Version 0.2.1
+Version 0.2.2
 
 Public intake form for record submissions, plus a password-protected admin desk in the same app and database. Someone fills in a name, address, image, and the record ID from a separate records system. This service stores the submission as `pending` in its own SQLite database and keeps the image on disk. An administrator can verify or reject it, then approve a verified submission. Approval is the point where a later LLM handoff will update the record in the other system. That call is not implemented yet.
 
@@ -71,6 +71,7 @@ Images must be JPEG, PNG, or WebP, at most 5 MB. The server checks the file byte
 
 ## Version history
 
+- 0.2.2 — Fix admin list clicks so a row, its name link, and Enter open the submission.
 - 0.2.1 — Fix JSON responses so Node's strict Content-Length check does not drop them.
 - 0.2.0 — Admin review: shared-password session, submission list and detail, verify and approve.
 - 0.1.0 — Initial public intake form, submission API, and SQLite storage.

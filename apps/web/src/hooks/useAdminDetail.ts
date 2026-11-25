@@ -43,6 +43,12 @@ export function useAdminDetail(): AdminDetailViewProps {
     isLoading: detail.isLoading,
     isSaving: review.isPending,
     error,
+    onBack: () => {
+      void navigate("/admin");
+    },
+    onGoHome: () => {
+      void navigate("/");
+    },
     onVerify: () => {
       review.mutate("verify");
     },

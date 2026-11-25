@@ -1,11 +1,17 @@
-import { Link, Navigate, Route, Routes } from "react-router";
+import type { MouseEvent } from "react";
+import { Navigate, Route, Routes, useNavigate } from "react-router";
 import { AdminDetailPage } from "@/admin/AdminDetailPage";
 import { AdminGuard } from "@/admin/AdminGuard";
 import { AdminListPage } from "@/admin/AdminListPage";
 import { AdminLoginPage } from "@/admin/AdminLoginPage";
 import { IntakeForm } from "@/intake/IntakeForm";
 
+function isPlainLeftClick(event: MouseEvent<HTMLAnchorElement>): boolean {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
 function PublicIntakePage() {
+  const navigate = useNavigate();
   return (
     <div className="min-h-svh">
       <div className="mx-auto grid max-w-5xl gap-10 px-6 py-12 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:items-start lg:py-20">
@@ -33,9 +39,19 @@ function PublicIntakePage() {
               The record ID is how an approved submission finds its record.
             </li>
           </ol>
-          <Link className="inline-block text-sm text-muted-foreground underline-offset-4 hover:underline" to="/admin">
+          <a
+            className="inline-block text-sm text-muted-foreground underline-offset-4 hover:underline"
+            href="/admin"
+            onClick={(event) => {
+              if (!isPlainLeftClick(event)) {
+                return;
+              }
+              event.preventDefault();
+              void navigate("/admin");
+            }}
+          >
             Admin review
-          </Link>
+          </a>
         </header>
         <section className="rounded-xl border border-border bg-card p-6 shadow-sm sm:p-8">
           <IntakeForm />

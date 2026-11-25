@@ -2,9 +2,7 @@ import type { Submission, SubmissionStatus } from "@intake/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createColumnHelper, getCoreRowModel, useReactTable } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router";
-import { formatTimestamp } from "@/admin/status";
-import { StatusBadge } from "@/components/admin/StatusBadge";
+import { useNavigate } from "react-router";
 import type { AdminListViewProps } from "@/components/admin/AdminListView";
 import { AdminApiError, fetchSubmissions, logout } from "@/lib/adminApi";
 
@@ -14,23 +12,15 @@ const submissionColumns = [
   columns.accessor((row) => `${row.firstName} ${row.lastName}`, {
     id: "name",
     header: "Name",
-    cell: (info) => (
-      <Link className="font-medium underline-offset-4 hover:underline" to={`/admin/submissions/${info.row.original.id}`}>
-        {info.getValue()}
-      </Link>
-    ),
   }),
   columns.accessor("externalId", {
     header: "Record ID",
-    cell: (info) => <span className="font-mono">{info.getValue()}</span>,
   }),
   columns.accessor("status", {
     header: "Status",
-    cell: (info) => <StatusBadge status={info.getValue()} />,
   }),
   columns.accessor("createdAt", {
     header: "Submitted",
-    cell: (info) => formatTimestamp(info.getValue()),
   }),
 ];
 
@@ -75,6 +65,12 @@ export function useAdminList(): AdminListViewProps {
     status,
     isLoading: list.isLoading,
     error: list.isError && !(list.error instanceof AdminApiError && list.error.status === 401) ? "Could not load submissions." : undefined,
+    onGoHome: () => {
+      void navigate("/");
+    },
+    onOpen: (id) => {
+      void navigate(`/admin/submissions/${id}`);
+    },
     onQueryChange: setQuery,
     onStatusChange: (value) => {
       setStatus(value);

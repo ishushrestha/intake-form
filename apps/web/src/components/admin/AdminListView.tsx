@@ -1,9 +1,10 @@
-import type { SubmissionStatus } from "@intake/contracts";
+import type { Submission, SubmissionStatus } from "@intake/contracts";
 import { flexRender, type Table } from "@tanstack/react-table";
-import type { Submission } from "@intake/contracts";
+import type { MouseEvent } from "react";
+import { formatTimestamp, statusLabels } from "@/admin/status";
 import { AdminShell } from "@/components/admin/AdminShell";
+import { StatusBadge } from "@/components/admin/StatusBadge";
 import { submissionStatuses } from "@intake/contracts";
-import { statusLabels } from "@/admin/status";
 
 export interface AdminListViewProps {
   readonly table: Table<Submission>;
@@ -11,16 +12,22 @@ export interface AdminListViewProps {
   readonly status: SubmissionStatus | "all";
   readonly isLoading: boolean;
   readonly error?: string;
+  readonly onGoHome: () => void;
+  readonly onOpen: (id: string) => void;
   readonly onQueryChange: (value: string) => void;
   readonly onStatusChange: (value: SubmissionStatus | "all") => void;
   readonly onLogout: () => void;
+}
+
+function isPlainLeftClick(event: MouseEvent<HTMLElement>): boolean {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
 
 export function AdminListView(props: AdminListViewProps) {
   const rows = props.table.getRowModel().rows;
 
   return (
-    <AdminShell onLogout={props.onLogout}>
+    <AdminShell onGoHome={props.onGoHome} onLogout={props.onLogout}>
       <div className="space-y-6">
         <div className="space-y-2">
           <h1 className="text-4xl tracking-tight">Submissions</h1>
@@ -92,15 +99,62 @@ export function AdminListView(props: AdminListViewProps) {
                   </td>
                 </tr>
               ) : (
-                rows.map((row) => (
-                  <tr className="border-t border-border" key={row.id}>
-                    {row.getVisibleCells().map((cell) => (
-                      <td className="px-4 py-3 align-middle" key={cell.id}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                ))
+                rows.map((row) => {
+                  const submission = row.original;
+                  const href = `/admin/submissions/${submission.id}`;
+                  return (
+                    <tr
+                      className="cursor-pointer border-t border-border hover:bg-muted/40"
+                      key={row.id}
+                      onClick={(event) => {
+                        if (!isPlainLeftClick(event)) {
+                          return;
+                        }
+                        if (event.target instanceof Element && event.target.closest("a") !== null) {
+                          return;
+                        }
+                        props.onOpen(submission.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") {
+                          return;
+                        }
+                        if (event.target instanceof Element && event.target.closest("a") !== null) {
+                          return;
+                        }
+                        event.preventDefault();
+                        props.onOpen(submission.id);
+                      }}
+                      tabIndex={0}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <td className="px-4 py-3 align-middle" key={cell.id}>
+                          {cell.column.id === "name" ? (
+                            <a
+                              className="font-medium underline-offset-4 hover:underline"
+                              href={href}
+                              onClick={(event) => {
+                                if (!isPlainLeftClick(event)) {
+                                  return;
+                                }
+                                event.preventDefault();
+                                props.onOpen(submission.id);
+                              }}
+                            >
+                              {submission.firstName} {submission.lastName}
+                            </a>
+                          ) : cell.column.id === "status" ? (
+                            <StatusBadge status={submission.status} />
+                          ) : cell.column.id === "externalId" ? (
+                            <span className="font-mono">{submission.externalId}</span>
+                          ) : (
+                            formatTimestamp(submission.createdAt)
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
