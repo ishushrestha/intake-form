@@ -19,6 +19,8 @@ const submission: Submission = {
   verifiedAt: null,
   rejectedAt: null,
   approvedAt: null,
+  workerMessage: null,
+  recordsRequestId: null,
 };
 
 function json(body: unknown, status = 200): Response {
@@ -75,6 +77,7 @@ describe("admin list navigation", () => {
     await user.click(await screen.findByRole("link", { name: "Katherine Johnson" }));
 
     expect(await screen.findByRole("button", { name: "Mark verified" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit to record manager" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Katherine Johnson" })).toBeInTheDocument();
     expect(window.location.pathname).toBe(`/admin/submissions/${submission.id}`);
 
@@ -124,5 +127,56 @@ describe("admin list navigation", () => {
     await user.click(back);
     expect(await screen.findByRole("heading", { name: "Submissions" })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/admin");
+  });
+
+  it("queues a verified submission and shows a failed worker message", async () => {
+    const user = userEvent.setup();
+    const verified: Submission = {
+      ...submission,
+      status: "verified",
+      verifiedAt: "2026-11-25T06:00:00.000Z",
+    };
+    let current: Submission = verified;
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        calls.push(`${init?.method ?? "GET"} ${url}`);
+        if (url.includes("/api/admin/session")) {
+          return json({ authenticated: true });
+        }
+        if (url.includes("/submit-to-records")) {
+          current = { ...current, status: "queued", workerMessage: null };
+          return json(current);
+        }
+        if (url.endsWith(`/api/submissions/${submission.id}`)) {
+          return json(current);
+        }
+        if (url.includes("/api/submissions")) {
+          return json({
+            submissions: [
+              current,
+              {
+                ...submission,
+                id: "5f3b1c0a-6d2e-4a1b-8c3d-9e0f1a2b3c4e",
+                status: "failed",
+                workerMessage: "Could not reach records-admin.",
+              },
+            ],
+          });
+        }
+        return json({ error: "not_found", message: "missing" }, 404);
+      }),
+    );
+    renderAdmin(`/admin/submissions/${submission.id}`);
+
+    await user.click(await screen.findByRole("button", { name: "Submit to record manager" }));
+    expect(await screen.findByText("Queued for the local worker.")).toBeInTheDocument();
+    expect(calls.some((call) => call.startsWith("POST") && call.includes("/submit-to-records"))).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Back to submissions" }));
+    const failedRow = await screen.findByRole("row", { name: /Could not reach records-admin/ });
+    expect(failedRow).toHaveTextContent("Failed");
   });
 });

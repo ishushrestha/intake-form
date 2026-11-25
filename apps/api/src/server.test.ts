@@ -22,6 +22,8 @@ const handlerPromise = Promise.resolve(
     webOrigin: "http://localhost:5173",
     adminPassword: "test-password",
     sessionSecret: "test-session-secret",
+    workerToken: "worker-test-token",
+    processingStaleMs: 10 * 60 * 1000,
   }),
 );
 

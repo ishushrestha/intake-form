@@ -2,6 +2,7 @@ export {
   apiErrorCodes,
   apiErrorSchema,
   addressSchema,
+  canSubmitToRecords,
   createSubmissionFieldsSchema,
   externalIdSchema,
   EXTERNAL_ID_PATTERN,
@@ -14,11 +15,16 @@ export {
   lastNameSchema,
   reviewActionSchema,
   reviewActions,
+  statusForWorkerOutcome,
   submissionImageSchema,
   submissionListSchema,
   submissionSchema,
   submissionStatusSchema,
   submissionStatuses,
+  workerJobSchema,
+  workerOutcomeSchema,
+  workerOutcomes,
+  workerResultSchema,
 } from "./submission.js";
 
 export type {
@@ -30,4 +36,7 @@ export type {
   SubmissionImage,
   SubmissionList,
   SubmissionStatus,
+  WorkerJob,
+  WorkerOutcome,
+  WorkerResultBody,
 } from "./submission.js";

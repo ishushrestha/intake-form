@@ -43,6 +43,7 @@ export function useAdminList(): AdminListViewProps {
   const list = useQuery({
     queryKey: ["submissions", status, submittedQuery],
     queryFn: () => fetchSubmissions({ status, query: submittedQuery }),
+    refetchInterval: 5000,
   });
 
   useEffect(() => {
