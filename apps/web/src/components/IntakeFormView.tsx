@@ -11,6 +11,11 @@ const statusLabels: Record<SubmissionStatus, string> = {
   verified: "Verified",
   approved: "Approved",
   rejected: "Rejected",
+  queued: "Queued",
+  processing: "Processing",
+  sent_to_records: "Sent to records",
+  id_not_found: "ID not found",
+  failed: "Failed",
 };
 
 export interface IntakeFormViewProps {

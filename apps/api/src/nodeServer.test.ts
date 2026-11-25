@@ -19,6 +19,8 @@ const app = HttpRouter.serve(
     webOrigin: "http://localhost:5173",
     adminPassword: "correct-horse",
     sessionSecret: "test-session-secret",
+    workerToken: "worker-test-token",
+    processingStaleMs: 10 * 60 * 1000,
   }),
   { disableLogger: true },
 ).pipe(Layer.provide(NodeHttpServer.layer(() => server, { host: "127.0.0.1", port: 0 })));

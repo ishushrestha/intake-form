@@ -5,6 +5,9 @@ import {
   fieldErrorsFromZod,
   imageMimeTypeSchema,
   submissionStatusSchema,
+  submissionStatuses,
+  workerJobSchema,
+  workerResultSchema,
   type ApiErrorBody,
   type ImageMimeType,
   type ReviewAction,
@@ -23,7 +26,8 @@ import type { AppConfig } from "./config.js";
 import { DatabaseLive } from "./db.js";
 import { StorageError, TransitionError } from "./errors.js";
 import { AppConfigService } from "./services.js";
-import { Submissions, SubmissionsLive } from "./submissions.js";
+import { Submissions, SubmissionsLive, type StoredImage } from "./submissions.js";
+import { bearerToken, tokenMatches } from "./workerAuth.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -63,6 +67,14 @@ function unauthorized() {
   return json(401, errorBody("unauthorized", "Sign in to review submissions."));
 }
 
+function workerUnauthorized() {
+  return json(401, errorBody("unauthorized", "Provide the worker token."));
+}
+
+function workerUnavailable() {
+  return json(503, errorBody("unavailable", "The worker API is not configured."));
+}
+
 function conflict() {
   return json(409, errorBody("conflict", "That status change is not allowed."));
 }
@@ -71,6 +83,24 @@ const ensureAdmin = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const auth = yield* AdminAuth;
   return auth.isAuthenticated(request.cookies[ADMIN_COOKIE]);
+});
+
+type WorkerAccess = { readonly ok: true } | { readonly ok: false; readonly response: ReturnType<typeof workerUnauthorized> };
+
+const authorizeWorker = Effect.gen(function* () {
+  const config = yield* AppConfigService;
+  if (config.workerToken === undefined) {
+    const unavailable: WorkerAccess = { ok: false, response: workerUnavailable() };
+    return unavailable;
+  }
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const provided = bearerToken(request.headers.authorization);
+  if (provided === undefined || !tokenMatches(provided, config.workerToken)) {
+    const denied: WorkerAccess = { ok: false, response: workerUnauthorized() };
+    return denied;
+  }
+  const allowed: WorkerAccess = { ok: true };
+  return allowed;
 });
 
 function textField(form: Multipart.Persisted, key: string): string {
@@ -151,6 +181,10 @@ function requestUrl(request: HttpServerRequest.HttpServerRequest): URL {
     return new URL(request.url);
   }
   return new URL(request.url, "http://localhost");
+}
+
+function workerImageUrl(id: string): string {
+  return `/api/worker/jobs/${id}/image`;
 }
 
 function routeId(params: Readonly<Record<string, string | undefined>>): string | undefined {
@@ -276,7 +310,7 @@ const listRoute = HttpRouter.add(
         const parsed = submissionStatusSchema.safeParse(statusRaw);
         if (!parsed.success) {
           return validation({
-            status: "Status must be pending, verified, approved, or rejected.",
+            status: `Status must be one of: ${submissionStatuses.join(", ")}.`,
           });
         }
         status = parsed.data;
@@ -330,18 +364,22 @@ const imageRoute = HttpRouter.add(
       if (image === undefined) {
         return notFound();
       }
-      const filename = image.filename.replaceAll('"', "");
-      return HttpServerResponse.raw(image.bytes, {
-        contentType: image.mimeType,
-        headers: {
-          "x-content-type-options": "nosniff",
-          "cache-control": "private, no-store",
-          "content-disposition": `inline; filename="${filename}"`,
-        },
-      });
+      return imageResponse(image);
     }),
   ),
 );
+
+function imageResponse(image: StoredImage) {
+  const filename = image.filename.replaceAll('"', "");
+  return HttpServerResponse.raw(image.bytes, {
+    contentType: image.mimeType,
+    headers: {
+      "x-content-type-options": "nosniff",
+      "cache-control": "private, no-store",
+      "content-disposition": `inline; filename="${filename}"`,
+    },
+  });
+}
 
 const applyReview = (id: string, action: ReviewAction) =>
   Effect.gen(function* () {
@@ -465,6 +503,123 @@ const logoutRoute = HttpRouter.add(
   ),
 );
 
+const submitToRecordsRoute = HttpRouter.add(
+  "POST",
+  "/api/admin/submissions/:id/submit-to-records",
+  recover(
+    Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
+      const id = routeId(yield* HttpRouter.params);
+      if (id === undefined) {
+        return notFound();
+      }
+      const submissions = yield* Submissions;
+      const result = yield* submissions.queueForRecords(id);
+      if (result === "conflict") {
+        return conflict();
+      }
+      if (result === undefined) {
+        return notFound();
+      }
+      return json(200, result);
+    }),
+  ),
+);
+
+const claimJobRoute = HttpRouter.add(
+  "POST",
+  "/api/worker/jobs/claim",
+  recover(
+    Effect.gen(function* () {
+      const access = yield* authorizeWorker;
+      if (!access.ok) {
+        return access.response;
+      }
+      const config = yield* AppConfigService;
+      const submissions = yield* Submissions;
+      const claimed = yield* submissions.claimJob(new Date(), config.processingStaleMs);
+      if (claimed === undefined) {
+        return HttpServerResponse.empty();
+      }
+      const job = workerJobSchema.parse({
+        ...claimed,
+        imageUrl: workerImageUrl(claimed.id),
+      });
+      return json(200, job);
+    }),
+  ),
+);
+
+const workerImageRoute = HttpRouter.add(
+  "GET",
+  "/api/worker/jobs/:id/image",
+  recover(
+    Effect.gen(function* () {
+      const access = yield* authorizeWorker;
+      if (!access.ok) {
+        return access.response;
+      }
+      const id = routeId(yield* HttpRouter.params);
+      if (id === undefined) {
+        return notFound();
+      }
+      const submissions = yield* Submissions;
+      const image = yield* submissions.readImage(id);
+      if (image === undefined) {
+        return notFound();
+      }
+      return imageResponse(image);
+    }),
+  ),
+);
+
+const workerResultRoute = HttpRouter.add(
+  "POST",
+  "/api/worker/jobs/:id/result",
+  recover(
+    Effect.gen(function* () {
+      const access = yield* authorizeWorker;
+      if (!access.ok) {
+        return access.response;
+      }
+      const id = routeId(yield* HttpRouter.params);
+      if (id === undefined) {
+        return notFound();
+      }
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const raw = yield* request.text.pipe(
+        Effect.provideService(HttpIncomingMessage.MaxBodySize)(ByteSize.bytes(8 * 1024)),
+      );
+      let payload: unknown;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        return validation({ outcome: "Send outcome as sent, id_not_found, or failed." });
+      }
+      const parsed = workerResultSchema.safeParse(payload);
+      if (!parsed.success) {
+        return validation(fieldErrorsFromZod(parsed.error), "Check the job result.");
+      }
+      const submissions = yield* Submissions;
+      const result = yield* submissions.completeJob(
+        id,
+        parsed.data.outcome,
+        parsed.data.message,
+        parsed.data.recordsRequestId,
+      );
+      if (result === "conflict") {
+        return conflict();
+      }
+      if (result === undefined) {
+        return notFound();
+      }
+      return json(200, result);
+    }),
+  ),
+);
+
 const sessionRoute = HttpRouter.add(
   "GET",
   "/api/admin/session",
@@ -499,6 +654,10 @@ export const makeRoutes = (config: AppConfig) => {
     loginRoute,
     logoutRoute,
     sessionRoute,
+    submitToRecordsRoute,
+    claimJobRoute,
+    workerImageRoute,
+    workerResultRoute,
     HttpRouter.cors({
       allowedOrigins: [config.webOrigin],
       allowedMethods: ["GET", "POST"],
@@ -508,6 +667,7 @@ export const makeRoutes = (config: AppConfig) => {
   ).pipe(
     HttpRouter.provideRequest(submissions),
     HttpRouter.provideRequest(auth),
+    HttpRouter.provideRequest(configLayer),
     HttpRouter.provideRequest(NodeServices.layer),
   );
 };

@@ -11,7 +11,13 @@ export interface AppConfig {
   readonly adminPassword: string | undefined;
   /** HMAC key for the admin session cookie. */
   readonly sessionSecret: string;
+  /** Bearer token for the local worker. Undefined closes the worker API. */
+  readonly workerToken: string | undefined;
+  /** Reclaim a processing job that has been held longer than this. */
+  readonly processingStaleMs: number;
 }
+
+export const PROCESSING_STALE_MS = 10 * 60 * 1000;
 
 function loadEnvFile(): void {
   const candidates = [resolve(process.cwd(), ".env"), resolve(process.cwd(), "../../.env")];
@@ -77,6 +83,7 @@ export function loadConfig(): AppConfig {
 
   const adminPassword = process.env.ADMIN_PASSWORD?.trim();
   const sessionSecret = process.env.SESSION_SECRET?.trim();
+  const workerToken = process.env.WORKER_TOKEN?.trim();
 
   return {
     port: readPort(process.env.PORT),
@@ -85,5 +92,7 @@ export function loadConfig(): AppConfig {
     webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:5173",
     adminPassword: adminPassword === undefined || adminPassword.length === 0 ? undefined : adminPassword,
     sessionSecret: sessionSecret === undefined || sessionSecret.length === 0 ? randomBytes(32).toString("base64url") : sessionSecret,
+    workerToken: workerToken === undefined || workerToken.length === 0 ? undefined : workerToken,
+    processingStaleMs: PROCESSING_STALE_MS,
   };
 }

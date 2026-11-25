@@ -11,9 +11,8 @@ export interface ApprovableSubmissions {
 
 /**
  * Approves a verified submission and records `approvedAt`.
- *
- * TODO: After the status change, a local LLM should read the approved submission,
- * log into the records system, and fill the record identified by `externalId`.
+ * Sending the submission to records-admin is separate: an admin queues it, and
+ * the local worker claims that job.
  */
 export const approveSubmission = (
   submissions: ApprovableSubmissions,

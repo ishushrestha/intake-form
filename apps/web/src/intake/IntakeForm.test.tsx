@@ -22,6 +22,8 @@ const submission = {
   verifiedAt: null,
   rejectedAt: null,
   approvedAt: null,
+  workerMessage: null,
+  recordsRequestId: null,
 };
 
 function renderForm() {

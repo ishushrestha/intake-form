@@ -7,6 +7,11 @@ const tones: Record<SubmissionStatus, string> = {
   verified: "bg-amber-100 text-amber-950",
   approved: "bg-emerald-100 text-emerald-950",
   rejected: "bg-red-100 text-red-950",
+  queued: "bg-sky-100 text-sky-950",
+  processing: "bg-indigo-100 text-indigo-950",
+  sent_to_records: "bg-emerald-100 text-emerald-950",
+  id_not_found: "bg-orange-100 text-orange-950",
+  failed: "bg-red-100 text-red-950",
 };
 
 export function StatusBadge({ status }: { readonly status: SubmissionStatus }) {

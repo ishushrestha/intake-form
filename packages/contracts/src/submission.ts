@@ -1,7 +1,17 @@
 import { z } from "zod";
 
-/** Lifecycle used by review and the later handoff into the records system. */
-export const submissionStatuses = ["pending", "verified", "approved", "rejected"] as const;
+/** Lifecycle used by review and the handoff into the records system. */
+export const submissionStatuses = [
+  "pending",
+  "verified",
+  "approved",
+  "rejected",
+  "queued",
+  "processing",
+  "sent_to_records",
+  "id_not_found",
+  "failed",
+] as const;
 
 export const submissionStatusSchema = z.enum(submissionStatuses);
 
@@ -88,6 +98,51 @@ export const reviewActionSchema = z.enum(reviewActions);
 
 export type ReviewAction = z.infer<typeof reviewActionSchema>;
 
+/** Statuses an admin can send, or send again, to the record manager. */
+export function canSubmitToRecords(status: SubmissionStatus): boolean {
+  return status === "verified" || status === "id_not_found" || status === "failed";
+}
+
+export const workerOutcomes = ["sent", "id_not_found", "failed"] as const;
+
+export const workerOutcomeSchema = z.enum(workerOutcomes);
+
+export type WorkerOutcome = z.infer<typeof workerOutcomeSchema>;
+
+export function statusForWorkerOutcome(outcome: WorkerOutcome): SubmissionStatus {
+  switch (outcome) {
+    case "sent":
+      return "sent_to_records";
+    case "id_not_found":
+      return "id_not_found";
+    case "failed":
+      return "failed";
+    default: {
+      const unreachable: never = outcome;
+      return unreachable;
+    }
+  }
+}
+
+export const workerResultSchema = z.object({
+  outcome: workerOutcomeSchema,
+  message: z.string().trim().max(2000).optional(),
+  recordsRequestId: z.string().trim().min(1).max(200).optional(),
+});
+
+export type WorkerResultBody = z.infer<typeof workerResultSchema>;
+
+export const workerJobSchema = z.object({
+  id: z.uuid(),
+  firstName: z.string(),
+  lastName: z.string(),
+  address: z.string(),
+  recordId: z.string(),
+  imageUrl: z.string().min(1),
+});
+
+export type WorkerJob = z.infer<typeof workerJobSchema>;
+
 /** Returns the next status, or undefined when the action is not allowed. */
 export function nextStatus(current: SubmissionStatus, action: ReviewAction): SubmissionStatus | undefined {
   if (current === "pending" && action === "verify") {
@@ -117,6 +172,8 @@ export const submissionSchema = z.object({
   verifiedAt: timestampSchema,
   rejectedAt: timestampSchema,
   approvedAt: timestampSchema,
+  workerMessage: z.string().nullable(),
+  recordsRequestId: z.string().nullable(),
 });
 
 export type Submission = z.infer<typeof submissionSchema>;

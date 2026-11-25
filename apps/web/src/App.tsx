@@ -32,11 +32,11 @@ function PublicIntakePage() {
             </li>
             <li className="flex gap-3">
               <span className="font-mono text-foreground">02</span>
-              Review can mark it verified, approved, or rejected.
+              Review can verify it and send it to the record manager.
             </li>
             <li className="flex gap-3">
               <span className="font-mono text-foreground">03</span>
-              The record ID is how an approved submission finds its record.
+              The record ID is how that handoff finds its record.
             </li>
           </ol>
           <a

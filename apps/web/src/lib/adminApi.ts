@@ -75,6 +75,21 @@ export async function fetchSubmission(id: string): Promise<Submission> {
   return parsed.data;
 }
 
+export async function submitToRecords(id: string): Promise<Submission> {
+  const response = await fetch(`/api/admin/submissions/${id}/submit-to-records`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw await readError(response, "Could not queue the submission.");
+  }
+  const parsed = submissionSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new AdminApiError(response.status, "Could not queue the submission.");
+  }
+  return parsed.data;
+}
+
 export async function reviewSubmission(id: string, action: "verify" | "reject" | "approve"): Promise<Submission> {
   const response = await fetch(`/api/submissions/${id}/${action}`, {
     method: "POST",

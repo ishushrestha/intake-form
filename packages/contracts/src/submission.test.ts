@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createSubmissionFieldsSchema, nextStatus, submissionSchema } from "./submission.js";
+import { canSubmitToRecords, createSubmissionFieldsSchema, nextStatus, statusForWorkerOutcome, submissionSchema } from "./submission.js";
 
 describe("createSubmissionFieldsSchema", () => {
   it("trims names and the external id", () => {
@@ -52,6 +52,8 @@ describe("submissionSchema", () => {
       verifiedAt: null,
       rejectedAt: null,
       approvedAt: null,
+      workerMessage: null,
+      recordsRequestId: null,
     });
 
     expect(submission.status).toBe("pending");
@@ -63,6 +65,17 @@ describe("nextStatus", () => {
     expect(nextStatus("pending", "verify")).toBe("verified");
     expect(nextStatus("pending", "reject")).toBe("rejected");
     expect(nextStatus("verified", "approve")).toBe("approved");
+  });
+
+  it("queues verified, missing, and failed submissions for another try", () => {
+    expect(canSubmitToRecords("verified")).toBe(true);
+    expect(canSubmitToRecords("id_not_found")).toBe(true);
+    expect(canSubmitToRecords("failed")).toBe(true);
+    expect(canSubmitToRecords("pending")).toBe(false);
+    expect(canSubmitToRecords("queued")).toBe(false);
+    expect(statusForWorkerOutcome("sent")).toBe("sent_to_records");
+    expect(statusForWorkerOutcome("id_not_found")).toBe("id_not_found");
+    expect(statusForWorkerOutcome("failed")).toBe("failed");
   });
 
   it("refuses skipping ahead or leaving a terminal status", () => {

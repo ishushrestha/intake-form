@@ -31,7 +31,7 @@ export function AdminListView(props: AdminListViewProps) {
       <div className="space-y-6">
         <div className="space-y-2">
           <h1 className="text-4xl tracking-tight">Submissions</h1>
-          <p className="text-muted-foreground">Newest first. Open a row to verify or approve it.</p>
+          <p className="text-muted-foreground">Newest first. Open a row to review it or send it to the record manager.</p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
           <label className="flex-1 text-sm font-medium" htmlFor="submission-search">
@@ -144,7 +144,13 @@ export function AdminListView(props: AdminListViewProps) {
                               {submission.firstName} {submission.lastName}
                             </a>
                           ) : cell.column.id === "status" ? (
-                            <StatusBadge status={submission.status} />
+                            <div className="space-y-1">
+                              <StatusBadge status={submission.status} />
+                              {submission.workerMessage !== null &&
+                              (submission.status === "failed" || submission.status === "id_not_found") ? (
+                                <p className="max-w-xs text-xs text-muted-foreground">{submission.workerMessage}</p>
+                              ) : null}
+                            </div>
                           ) : cell.column.id === "externalId" ? (
                             <span className="font-mono">{submission.externalId}</span>
                           ) : (

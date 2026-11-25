@@ -19,6 +19,8 @@ function createApp(directory: string) {
     webOrigin: "http://localhost:5173",
     adminPassword: PASSWORD,
     sessionSecret: "test-session-secret",
+    workerToken: "worker-test-token",
+    processingStaleMs: 10 * 60 * 1000,
   });
 }
 

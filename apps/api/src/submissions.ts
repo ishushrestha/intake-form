@@ -3,11 +3,13 @@ import type { Row } from "@libsql/client";
 import {
   imageMimeTypeSchema,
   nextStatus,
+  statusForWorkerOutcome,
   submissionSchema,
   type ImageMimeType,
   type ReviewAction,
   type Submission,
   type SubmissionStatus,
+  type WorkerOutcome,
 } from "@intake/contracts";
 import { Context, Effect, FileSystem, Layer, Path } from "effect";
 import { Database } from "./db.js";
@@ -33,6 +35,16 @@ export interface StoredImage {
   readonly filename: string;
 }
 
+export interface ClaimedJob {
+  readonly id: string;
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly address: string;
+  readonly recordId: string;
+}
+
+export type JobUpdate = Submission | undefined | "conflict";
+
 export class Submissions extends Context.Service<
   Submissions,
   {
@@ -47,6 +59,14 @@ export class Submissions extends Context.Service<
       id: string,
       action: ReviewAction,
     ) => Effect.Effect<Submission | undefined, StorageError | TransitionError>;
+    readonly queueForRecords: (id: string) => Effect.Effect<JobUpdate, StorageError>;
+    readonly claimJob: (now: Date, staleMs: number) => Effect.Effect<ClaimedJob | undefined, StorageError>;
+    readonly completeJob: (
+      id: string,
+      outcome: WorkerOutcome,
+      message: string | undefined,
+      recordsRequestId: string | undefined,
+    ) => Effect.Effect<JobUpdate, StorageError>;
   }
 >()("intake/Submissions") {}
 
@@ -54,7 +74,8 @@ const SELECT_LIST = `
   SELECT
     id, first_name, last_name, address, external_id, status,
     image_filename, image_mime_type, image_size_bytes, image_storage_path,
-    created_at, updated_at, verified_at, rejected_at, approved_at
+    created_at, updated_at, verified_at, rejected_at, approved_at,
+    worker_message, records_request_id
   FROM submissions
 `;
 
@@ -114,6 +135,8 @@ function toSubmission(row: Row): Submission | StorageError {
       verifiedAt: takeOptional(optionalTimestamp(row, "verified_at")),
       rejectedAt: takeOptional(optionalTimestamp(row, "rejected_at")),
       approvedAt: takeOptional(optionalTimestamp(row, "approved_at")),
+      workerMessage: takeOptional(optionalTimestamp(row, "worker_message")),
+      recordsRequestId: takeOptional(optionalTimestamp(row, "records_request_id")),
     });
     if (!parsed.success) {
       return new StorageError({ cause: parsed.error });
@@ -165,7 +188,35 @@ export const SubmissionsLive = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
 
-    const rowsOf = (sql: string, args?: ReadonlyArray<string>) => database.execute(sql, args ? [...args] : undefined);
+    const rowsOf = (sql: string, args?: ReadonlyArray<string | null>) =>
+      database.execute(sql, args ? [...args] : undefined);
+
+    const load = (id: string) =>
+      Effect.gen(function* () {
+        const rows = yield* rowsOf(`${SELECT_LIST} WHERE id = ?`, [id]);
+        const row = rows[0];
+        if (row === undefined) {
+          return undefined;
+        }
+        const submission = toSubmission(row);
+        if (submission instanceof StorageError) {
+          return yield* Effect.fail(submission);
+        }
+        return submission;
+      }).pipe(Effect.mapError(failStorage));
+
+    const finishUpdate = (id: string, updatedRows: readonly Row[]) =>
+      Effect.gen(function* () {
+        if (updatedRows.length > 0) {
+          return yield* load(id);
+        }
+        const existing = yield* load(id);
+        if (existing === undefined) {
+          return undefined;
+        }
+        const conflict: JobUpdate = "conflict";
+        return conflict;
+      });
 
     return {
       create: (input) =>
@@ -227,6 +278,8 @@ export const SubmissionsLive = Layer.effect(
             verifiedAt: null,
             rejectedAt: null,
             approvedAt: null,
+            workerMessage: null,
+            recordsRequestId: null,
           });
           if (!submission.success) {
             return yield* Effect.fail(new StorageError({ cause: submission.error }));
@@ -261,19 +314,7 @@ export const SubmissionsLive = Layer.effect(
           }
           return submissions;
         }).pipe(Effect.mapError(failStorage)),
-      get: (id) =>
-        Effect.gen(function* () {
-          const rows = yield* rowsOf(`${SELECT_LIST} WHERE id = ?`, [id]);
-          const row = rows[0];
-          if (row === undefined) {
-            return undefined;
-          }
-          const submission = toSubmission(row);
-          if (submission instanceof StorageError) {
-            return yield* Effect.fail(submission);
-          }
-          return submission;
-        }).pipe(Effect.mapError(failStorage)),
+      get: (id) => load(id),
       readImage: (id) =>
         Effect.gen(function* () {
           const rows = yield* database.execute(
@@ -344,6 +385,91 @@ export const SubmissionsLive = Layer.effect(
             return yield* Effect.fail(new StorageError({ cause: updated.error }));
           }
           return updated.data;
+        }),
+      queueForRecords: (id) =>
+        Effect.gen(function* () {
+          const now = new Date().toISOString();
+          const updated = yield* database.execute(
+            `
+            UPDATE submissions
+            SET status = 'queued',
+                updated_at = ?,
+                worker_message = NULL,
+                records_request_id = NULL,
+                processing_started_at = NULL
+            WHERE id = ? AND status IN ('verified', 'id_not_found', 'failed')
+            RETURNING id
+            `,
+            [now, id],
+          );
+          return yield* finishUpdate(id, updated);
+        }),
+      claimJob: (now, staleMs) =>
+        Effect.gen(function* () {
+          const claimedAt = now.toISOString();
+          const staleBefore = new Date(now.getTime() - staleMs).toISOString();
+          const rows = yield* database.execute(
+            `
+            UPDATE submissions
+            SET status = 'processing',
+                processing_started_at = ?,
+                updated_at = ?,
+                worker_message = NULL
+            WHERE id = (
+              SELECT id FROM submissions
+              WHERE status = 'queued'
+                 OR (
+                   status = 'processing'
+                   AND (processing_started_at IS NULL OR processing_started_at <= ?)
+                 )
+              ORDER BY CASE WHEN status = 'queued' THEN 0 ELSE 1 END, created_at ASC
+              LIMIT 1
+            )
+            AND (
+              status = 'queued'
+              OR (
+                status = 'processing'
+                AND (processing_started_at IS NULL OR processing_started_at <= ?)
+              )
+            )
+            RETURNING id, first_name, last_name, address, external_id
+            `,
+            [claimedAt, claimedAt, staleBefore, staleBefore],
+          );
+          const row = rows[0];
+          if (row === undefined) {
+            return undefined;
+          }
+          try {
+            const claimed: ClaimedJob = {
+              id: takeString(requireString(row, "id")),
+              firstName: takeString(requireString(row, "first_name")),
+              lastName: takeString(requireString(row, "last_name")),
+              address: takeString(requireString(row, "address")),
+              recordId: takeString(requireString(row, "external_id")),
+            };
+            return claimed;
+          } catch (cause) {
+            return yield* Effect.fail(failStorage(cause));
+          }
+        }).pipe(Effect.mapError(failStorage)),
+      completeJob: (id, outcome, message, recordsRequestId) =>
+        Effect.gen(function* () {
+          const now = new Date().toISOString();
+          const updated = yield* database.execute(
+            `
+            UPDATE submissions
+            SET status = ?,
+                updated_at = ?,
+                worker_message = ?,
+                records_request_id = ?,
+                processing_started_at = NULL
+            WHERE id = ? AND status = 'processing'
+            RETURNING id
+            `,
+            [statusForWorkerOutcome(outcome), now, message ?? null, recordsRequestId ?? null, id],
+          );
+          return yield* finishUpdate(id, updated);
         }),
     };
   }),
