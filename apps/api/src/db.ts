@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS entry_requests (
   address TEXT NOT NULL,
   notes TEXT,
   entry_id TEXT,
+  records_artist_id TEXT,
   failure_reason TEXT,
   screenshot_path TEXT,
   verify_requested_at TEXT,
@@ -111,6 +112,11 @@ async function migrate(client: Client): Promise<void> {
   }
   await client.execute(CREATE_INDEX);
   await client.execute(CREATE_ENTRY_REQUESTS);
+  const entryRequestInfo = await client.execute("PRAGMA table_info(entry_requests)");
+  const entryRequestColumns = new Set(entryRequestInfo.rows.map((row) => String(row.name)));
+  if (!entryRequestColumns.has("records_artist_id")) {
+    await client.execute("ALTER TABLE entry_requests ADD COLUMN records_artist_id TEXT");
+  }
   await client.execute(CREATE_ENTRY_REQUESTS_INDEX);
 }
 

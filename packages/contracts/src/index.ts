@@ -42,6 +42,7 @@ export type {
 } from "./submission.js";
 
 export {
+  canRejectEntryRequest,
   canReviewEntryRequest,
   createEntryRequestSchema,
   entryRequestListSchema,

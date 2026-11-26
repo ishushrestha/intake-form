@@ -69,7 +69,7 @@ The admin password is hashed in memory with scrypt when the API starts and compa
 - `POST /api/submissions/:id/approve` — admin cookie only. `verified` → `approved`, and records `approvedAt`.
 - `POST /api/admin/submissions/:id/submit-to-records` — admin cookie only. `verified`, `id_not_found`, or `failed` → `queued`.
 - `GET /api/admin/entry-requests` — admin cookie only. Newest first. Each row has status `pending`, `verifying`, `done`, `failed`, or `rejected`.
-- `POST /api/admin/entry-requests/:id/verify` — admin cookie only. Marks a `pending` request so the worker may type it. Status stays `pending` until the worker claims it.
+- `POST /api/admin/entry-requests/:id/verify` — admin cookie only. Marks a `pending` or `failed` request so the worker may type it. Status becomes `pending` until the worker claims it.
 - `POST /api/admin/entry-requests/:id/reject` — admin cookie only. `pending` → `rejected`. The worker never opens records-admin for it.
 - `GET /api/admin/entry-requests/:id/screenshot` — admin cookie only. PNG from the last Verify attempt.
 - `POST /api/worker/jobs/claim` — `Authorization: Bearer $WORKER_TOKEN` only. Claims one queued job, or a job left in `processing` for more than 10 minutes, and returns `{ id, firstName, lastName, address, recordId, imageUrl }`. `204` when nothing is waiting. `503` when `WORKER_TOKEN` is unset.
@@ -78,12 +78,12 @@ The admin password is hashed in memory with scrypt when the API starts and compa
 - `POST /api/worker/entry-requests` — the same bearer token. JSON mapped fields. Creates a `pending` LLM entry request, or returns the existing one for that submission.
 - `POST /api/worker/entry-requests/claim` — the same bearer token. Atomically moves one verify-requested `pending` request to `verifying`. `204` when none are waiting. A row left in `verifying` is not reclaimed.
 - `GET /api/worker/entry-requests/:id/image` — the same bearer token. Image from the source submission.
-- `POST /api/worker/entry-requests/:id/result` — the same bearer token. Multipart `outcome` (`done` or `failed`), optional `entryId` and `message`, and a screenshot file.
+- `POST /api/worker/entry-requests/:id/result` — the same bearer token. Multipart `outcome` (`done` or `failed`), optional `entryId`, `recordsArtistId`, and `message`, and a screenshot file.
 - `GET /api/health` — `{ "ok": true }`.
 
 The admin cookie does not authenticate worker routes, and the worker token does not authenticate admin routes. Statuses shown on submissions are `pending`, `verified`, `approved`, `rejected`, `queued`, `processing`, `sent_to_records`, `id_not_found`, and `failed`. `id_not_found` and `failed` keep the worker's message and can be queued again.
 
-The record ID is trimmed and limited to letters, numbers, and `.` `_` `-`. Intake does not look it up. The worker maps it into a pending request. Verify later finds or creates the artist in the records-admin UI.
+The record ID is trimmed and limited to letters, numbers, and `.` `_` `-`. Intake does not look it up. The worker maps it into a pending request. Verify later finds that artist in the records-admin UI. If the ID is missing, the request fails; it does not create a new artist.
 
 Images must be JPEG, PNG, or WebP, at most 5 MB. The server checks the file bytes, not only the browser-supplied type.
 
@@ -115,14 +115,21 @@ notepad .env
 
 Set `WORKER_TOKEN` to the token.
 
+If this is a new checkout:
+
 ```cmd
 copy apps\llm-worker\.env.example apps\llm-worker\.env
+```
+
+If you already have `apps\llm-worker\.env` from v0.3.0, do not copy `.env.example` over it. That would drop `INTAKE_WORKER_TOKEN`. Add the new keys below, and delete `RECORDS_WORKER_TOKEN` and `RECORDS_API_URL`.
+
+```cmd
 notepad apps\llm-worker\.env
 ```
 
 Set these keys in `apps\llm-worker\.env`:
 
-```cmd
+```ini
 INTAKE_API_URL=http://127.0.0.1:3001
 INTAKE_WORKER_TOKEN=
 RECORDS_ADMIN_URL=http://localhost:5174
@@ -162,10 +169,10 @@ pnpm worker
 
 In the admin detail page, mark a submission verified, then choose **Submit to record manager**. The worker claims it, asks Ollama for strict JSON at temperature 0, and checks that output against the original submission. The record ID must match exactly. Names and the address cannot gain words. On a mismatch the worker saves the original values and records a note. It then stores a **pending** LLM entry request in this database. It does not call records-admin APIs, databases, or worker endpoints.
 
-Open **LLM entry requests**. Verify and Reject are only available while the request is pending.
+Open **LLM entry requests**. Verify and Reject are available while the request is pending. Failed requests show **Retry**.
 
 - **Reject** marks it rejected. The worker never opens records-admin for it.
-- **Verify** asks the worker to drive the records-admin pages like a person: log in, find or create the artist, add the entry, then read the new entry ID. The worker moves the row to `verifying` before it types. A row stuck in `verifying` is not retried. Done stores the entry ID and a screenshot. Failed stores a reason and a screenshot. Both show on the review page.
+- **Verify** asks the worker to drive the records-admin pages like a person: log in, find the artist by Record ID, add the entry, then read the new entry ID and the artist ID actually used. If that Record ID is not on the Artists table, the request fails with `Artist <id> not found in records-admin` and no artist is created. An artist is created only when no Record ID was requested. The worker moves the row to `verifying` before it types. A row stuck in `verifying` is not retried. **Retry** on a failed request queues it again without creating a second row. Done stores the entry ID, the real artist ID, and a screenshot. Failed stores a reason and a screenshot. Both show on the review page.
 
 Playwright network requests are limited to the same allowlist as the worker HTTP client: intake, Ollama, and the records-admin web origin.
 

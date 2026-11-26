@@ -1,11 +1,11 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AllowedFetch } from "./allowlist.js";
 import { createAllowedFetch } from "./allowlist.js";
 import { loadWorkerConfig, type WorkerConfig } from "./config.js";
-import { entryIdFromPageUrl } from "./playbooks/records-admin.js";
+import { artistIdFromPageUrl, artistNotFoundMessage, entryIdFromPageUrl } from "./playbooks/records-admin.js";
 import { runOnce } from "./run.js";
 
 const jobId = "4f3b1c0a-6d2e-4a1b-8c3d-9e0f1a2b3c4d";
@@ -183,7 +183,13 @@ describe("local worker", () => {
     writeFileSync(join(screenshotDir, `${requestId}.png`), Buffer.from("png"));
     const world = fakeWorld({ verifyJob: true });
     const playbook = {
-      submitEntry: vi.fn(async (_target, _proposed, _screenshotPath) => ({ entryId: "entry-99" })),
+      submitEntry: vi.fn(async (_target, proposed, _screenshotPath) => {
+        expect(existsSync(proposed.imagePath)).toBe(true);
+        return {
+          entryId: "entry-99",
+          artistId: "A0001",
+        };
+      }),
     };
     const cycle = await runOnce({
       config,
@@ -206,8 +212,10 @@ describe("local worker", () => {
     const resultCall = world.calls.find((call) => call.url.endsWith(`/${requestId}/result`));
     expect(resultCall?.form?.get("outcome")).toBe("done");
     expect(resultCall?.form?.get("entryId")).toBe("entry-99");
+    expect(resultCall?.form?.get("recordsArtistId")).toBe("A0001");
     expect(resultCall?.form?.get("screenshot")).toBeTruthy();
     expect(world.calls.some((call) => call.url.includes(":3002"))).toBe(false);
+    expect(existsSync(join(tmpdir(), "intake-worker-images", `${requestId}.png`))).toBe(false);
   });
 
   it("does not retry a playbook failure as a second claim in the same cycle", async () => {
@@ -230,6 +238,7 @@ describe("local worker", () => {
     }
     expect(world.calls.filter((call) => call.url.endsWith("/entry-requests/claim")).length).toBe(1);
     expect(world.calls.some((call) => call.url.endsWith("/jobs/claim"))).toBe(false);
+    expect(existsSync(join(tmpdir(), "intake-worker-images", `${requestId}.png`))).toBe(false);
   });
 
   it("blocks a host that is not on the allowlist", async () => {
@@ -247,7 +256,7 @@ describe("local worker", () => {
       config,
       fetchImpl: world.fetchImpl,
       playbook: {
-        submitEntry: async () => ({ entryId: "nope" }),
+        submitEntry: async () => ({ entryId: "nope", artistId: "A0001" }),
       },
     });
     expect(cycle.kind).toBe("verified");
@@ -267,10 +276,11 @@ describe("local worker", () => {
     expect(() => loadWorkerConfig({ ...baseEnv, RECORDS_WORKER_TOKEN: "leftover" })).not.toThrow();
   });
 
-  it("reads the entry id from the records-admin entry URL", () => {
-    expect(entryIdFromPageUrl("http://localhost:5174/artists/A0001/entries/81c06fd9-4c3a-4bd1-9958-ed4ebd3aad0b")).toBe(
-      "81c06fd9-4c3a-4bd1-9958-ed4ebd3aad0b",
-    );
+  it("reads the entry id and artist id from the records-admin entry URL", () => {
+    const url = "http://localhost:5174/artists/A0001/entries/81c06fd9-4c3a-4bd1-9958-ed4ebd3aad0b";
+    expect(entryIdFromPageUrl(url)).toBe("81c06fd9-4c3a-4bd1-9958-ed4ebd3aad0b");
+    expect(artistIdFromPageUrl(url)).toBe("A0001");
     expect(entryIdFromPageUrl("http://localhost:5174/artists/A0001/entries/new")).toBeUndefined();
+    expect(artistNotFoundMessage("A0099")).toBe("Artist A0099 not found in records-admin");
   });
 });

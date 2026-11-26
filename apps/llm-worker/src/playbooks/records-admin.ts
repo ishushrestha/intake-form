@@ -21,7 +21,11 @@ export interface RecordsAdminPlaybook {
     target: RecordsAdminTarget,
     proposed: ProposedRecordsEntry,
     screenshotPath: string,
-  ) => Promise<{ readonly entryId: string }>;
+  ) => Promise<{ readonly entryId: string; readonly artistId: string }>;
+}
+
+export function artistNotFoundMessage(artistId: string): string {
+  return `Artist ${artistId} not found in records-admin`;
 }
 
 /**
@@ -37,6 +41,22 @@ export function entryIdFromPageUrl(url: string): string | undefined {
     return undefined;
   }
   const match = parsed.pathname.match(/\/entries\/([^/]+)\/?$/);
+  const id = match?.[1];
+  if (id === undefined || id.length === 0 || id === "new") {
+    return undefined;
+  }
+  return id;
+}
+
+/** Artist ID from `/artists/:artistId` on the rendered page URL. */
+export function artistIdFromPageUrl(url: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  const match = parsed.pathname.match(/\/artists\/([^/]+)/);
   const id = match?.[1];
   if (id === undefined || id.length === 0 || id === "new") {
     return undefined;
@@ -71,18 +91,31 @@ async function loginIfNeeded(page: Page, target: RecordsAdminTarget): Promise<vo
   await page.getByRole("textbox", { name: "Username" }).fill(target.username);
   await page.getByRole("textbox", { name: "Password" }).fill(target.password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await page.getByRole("heading", { name: "Artists" }).waitFor();
+  const artists = page.getByRole("heading", { name: "Artists" });
+  const alert = page.getByRole("alert");
+  try {
+    await Promise.race([artists.waitFor({ timeout: 8000 }), alert.waitFor({ timeout: 8000 })]);
+  } catch {
+    throw new Error("records-admin login failed");
+  }
+  if ((await artists.count()) === 0) {
+    throw new Error("records-admin login failed");
+  }
 }
 
 async function openOrCreateArtist(page: Page, proposed: ProposedRecordsEntry): Promise<void> {
   await page.getByRole("heading", { name: "Artists" }).waitFor();
-  const artistsTable = page.getByRole("table", { name: "Artists" });
-  const row = artistsTable.getByRole("row").filter({
-    has: page.getByRole("cell", { name: proposed.artistId, exact: true }),
-  });
-  if ((await row.count()) > 0) {
+  const requestedId = proposed.artistId.trim();
+  if (requestedId.length > 0) {
+    const artistsTable = page.getByRole("table", { name: "Artists" });
+    const row = artistsTable.getByRole("row").filter({
+      has: page.getByRole("cell", { name: requestedId, exact: true }),
+    });
+    if ((await row.count()) === 0) {
+      throw new Error(artistNotFoundMessage(requestedId));
+    }
     await row.getByRole("link").click();
-    await page.getByText(`ID ${proposed.artistId}`, { exact: false }).waitFor();
+    await page.getByText(`ID ${requestedId}`, { exact: false }).waitFor();
     return;
   }
   await page.getByRole("button", { name: "Create artist" }).click();
@@ -92,7 +125,7 @@ async function openOrCreateArtist(page: Page, proposed: ProposedRecordsEntry): P
   await page.getByRole("button", { name: "Create entry" }).waitFor();
 }
 
-async function createEntry(page: Page, proposed: ProposedRecordsEntry): Promise<string> {
+async function createEntry(page: Page, proposed: ProposedRecordsEntry): Promise<{ entryId: string; artistId: string }> {
   await page.getByRole("button", { name: "Create entry" }).click();
   await page.getByRole("heading", { name: "Create entry" }).waitFor();
   await page.getByRole("textbox", { name: "First name" }).fill(proposed.firstName);
@@ -103,10 +136,14 @@ async function createEntry(page: Page, proposed: ProposedRecordsEntry): Promise<
   await page.getByRole("button", { name: "Back to artist", exact: true }).waitFor();
   await page.waitForURL((url) => entryIdFromPageUrl(url.toString()) !== undefined);
   const entryId = entryIdFromPageUrl(page.url());
+  const artistId = artistIdFromPageUrl(page.url());
   if (entryId === undefined) {
     throw new Error("The records-admin page did not show a labeled entry ID; the URL after create had none.");
   }
-  return entryId;
+  if (artistId === undefined) {
+    throw new Error("The records-admin page did not show the artist ID after creating the entry.");
+  }
+  return { entryId, artistId };
 }
 
 export function createRecordsAdminPlaybook(options: {
@@ -125,9 +162,9 @@ export function createRecordsAdminPlaybook(options: {
         await page.goto(`${origin}/login`, { waitUntil: "networkidle" });
         await loginIfNeeded(page, target);
         await openOrCreateArtist(page, proposed);
-        const entryId = await createEntry(page, proposed);
+        const created = await createEntry(page, proposed);
         await screenshotBestEffort(page, screenshotPath);
-        return { entryId };
+        return created;
       } catch (error) {
         await screenshotBestEffort(page, screenshotPath);
         throw error;

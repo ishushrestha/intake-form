@@ -34,6 +34,7 @@ const pendingRequest: EntryRequest = {
   address: "1 Langley Boulevard, Hampton",
   notes: "Spacing checked.",
   entryId: null,
+  recordsArtistId: null,
   failureReason: null,
   screenshotAvailable: false,
   verifyRequestedAt: null,
@@ -103,5 +104,45 @@ describe("LLM entry requests page", () => {
     expect(await screen.findByText("Waiting for the local worker.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Verify" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+  });
+
+  it("shows Retry on a failed request and the real artist ID next to the entry ID when done", async () => {
+    const failed: EntryRequest = {
+      ...pendingRequest,
+      status: "failed",
+      failureReason: "records-admin login failed",
+      screenshotAvailable: true,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("/api/admin/session")) {
+          return json({ authenticated: true });
+        }
+        if (url.includes("/api/admin/entry-requests")) {
+          return json({
+            requests: [
+              failed,
+              {
+                ...pendingRequest,
+                id: "7f3b1c0a-6d2e-4a1b-8c3d-9e0f1a2b3c4a",
+                status: "done",
+                entryId: "entry-1",
+                recordsArtistId: "A0001",
+                verifyRequestedAt: "2026-11-25T06:12:00.000Z",
+                screenshotAvailable: true,
+              },
+            ],
+          });
+        }
+        return json({ error: "not_found", message: "missing" }, 404);
+      }),
+    );
+
+    renderApp("/admin/entry-requests");
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    expect(screen.getByText("Artist A0001 · Entry entry-1")).toBeInTheDocument();
   });
 });

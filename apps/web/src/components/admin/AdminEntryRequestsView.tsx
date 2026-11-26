@@ -1,4 +1,9 @@
-import { canReviewEntryRequest, type EntryRequest, type EntryRequestStatus } from "@intake/contracts";
+import {
+  canRejectEntryRequest,
+  canReviewEntryRequest,
+  type EntryRequest,
+  type EntryRequestStatus,
+} from "@intake/contracts";
 import type { MouseEvent } from "react";
 import { formatTimestamp } from "@/admin/status";
 import { AdminShell } from "@/components/admin/AdminShell";
@@ -69,7 +74,8 @@ export function AdminEntryRequestsView(props: AdminEntryRequestsViewProps) {
           <ul className="space-y-4">
             {props.requests.map((request) => {
               const busy = props.isSaving && props.savingId === request.id;
-              const actionable = canReviewEntryRequest(request.status, request.verifyRequestedAt);
+              const canVerify = canReviewEntryRequest(request.status, request.verifyRequestedAt);
+              const canReject = canRejectEntryRequest(request.status, request.verifyRequestedAt);
               return (
                 <li key={request.id}>
                   <article className="space-y-4 rounded-xl border border-border bg-card p-5">
@@ -115,10 +121,14 @@ export function AdminEntryRequestsView(props: AdminEntryRequestsViewProps) {
                           <dd>{request.notes}</dd>
                         </div>
                       )}
-                      {request.entryId === null ? null : (
-                        <div>
-                          <dt className="text-muted-foreground">Entry ID</dt>
-                          <dd className="font-mono break-all">{request.entryId}</dd>
+                      {request.entryId === null && request.recordsArtistId === null ? null : (
+                        <div className="sm:col-span-2">
+                          <dt className="text-muted-foreground">Records IDs</dt>
+                          <dd className="font-mono break-all">
+                            {request.recordsArtistId === null ? null : <>Artist {request.recordsArtistId}</>}
+                            {request.recordsArtistId !== null && request.entryId !== null ? " · " : null}
+                            {request.entryId === null ? null : <>Entry {request.entryId}</>}
+                          </dd>
                         </div>
                       )}
                       <div>
@@ -144,19 +154,23 @@ export function AdminEntryRequestsView(props: AdminEntryRequestsViewProps) {
                     >
                       Source submission
                     </a>
-                    {actionable ? (
+                    {canVerify || canReject ? (
                       <div className="flex flex-wrap gap-3">
-                        <Button disabled={busy} onClick={() => props.onVerify(request.id)} type="button">
-                          Verify
-                        </Button>
-                        <Button
-                          disabled={busy}
-                          onClick={() => props.onReject(request.id)}
-                          type="button"
-                          variant="outline"
-                        >
-                          Reject
-                        </Button>
+                        {canVerify ? (
+                          <Button disabled={busy} onClick={() => props.onVerify(request.id)} type="button">
+                            {request.status === "failed" ? "Retry" : "Verify"}
+                          </Button>
+                        ) : null}
+                        {canReject ? (
+                          <Button
+                            disabled={busy}
+                            onClick={() => props.onReject(request.id)}
+                            type="button"
+                            variant="outline"
+                          >
+                            Reject
+                          </Button>
+                        ) : null}
                       </div>
                     ) : null}
                     {request.screenshotAvailable && (request.status === "done" || request.status === "failed") ? (

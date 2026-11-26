@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -28,6 +28,7 @@ export type CycleResult =
       readonly id: string;
       readonly outcome: "done" | "failed";
       readonly entryId?: string;
+      readonly recordsArtistId?: string;
       readonly message?: string;
     };
 
@@ -238,12 +239,20 @@ async function reportVerifyResult(
   config: WorkerConfig,
   id: string,
   outcome: "done" | "failed",
-  options: { readonly entryId?: string; readonly message?: string; readonly screenshotPath?: string },
+  options: {
+    readonly entryId?: string;
+    readonly recordsArtistId?: string;
+    readonly message?: string;
+    readonly screenshotPath?: string;
+  },
 ): Promise<void> {
   const form = new FormData();
   form.set("outcome", outcome);
   if (options.entryId !== undefined) {
     form.set("entryId", options.entryId);
+  }
+  if (options.recordsArtistId !== undefined) {
+    form.set("recordsArtistId", options.recordsArtistId);
   }
   if (options.message !== undefined) {
     form.set("message", options.message);
@@ -268,7 +277,12 @@ async function handleVerify(
   job: VerifyJob,
   playbook: RecordsAdminPlaybook,
   screenshotDir: string,
-): Promise<{ readonly outcome: "done" | "failed"; readonly entryId?: string; readonly message?: string }> {
+): Promise<{
+  readonly outcome: "done" | "failed";
+  readonly entryId?: string;
+  readonly recordsArtistId?: string;
+  readonly message?: string;
+}> {
   mkdirSync(screenshotDir, { recursive: true });
   const screenshotPath = join(screenshotDir, `${job.id}.png`);
   const imageDir = join(tmpdir(), "intake-worker-images");
@@ -294,9 +308,13 @@ async function handleVerify(
       },
       screenshotPath,
     );
-    return { outcome: "done", entryId: result.entryId };
+    return { outcome: "done", entryId: result.entryId, recordsArtistId: result.artistId };
   } catch (error) {
     return { outcome: "failed", message: errorMessage(error) };
+  } finally {
+    if (imagePath !== undefined) {
+      rmSync(imagePath, { force: true });
+    }
   }
 }
 
@@ -322,6 +340,7 @@ export async function runOnce(deps: WorkerDependencies): Promise<CycleResult> {
     const result = await handleVerify(fetchImpl, deps, verifyJob, playbook, screenshotDir);
     await reportVerifyResult(fetchImpl, config, verifyJob.id, result.outcome, {
       entryId: result.entryId,
+      recordsArtistId: result.recordsArtistId,
       message: clip(result.message),
       screenshotPath: join(screenshotDir, `${verifyJob.id}.png`),
     });

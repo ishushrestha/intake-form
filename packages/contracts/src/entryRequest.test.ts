@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { canReviewEntryRequest, createEntryRequestSchema } from "./entryRequest.js";
+import { canRejectEntryRequest, canReviewEntryRequest, createEntryRequestSchema } from "./entryRequest.js";
 
 describe("entry request review", () => {
-  it("allows Verify and Reject only while pending and not already queued", () => {
+  it("allows Verify on pending or failed, and Reject only while pending and not queued", () => {
     expect(canReviewEntryRequest("pending", null)).toBe(true);
     expect(canReviewEntryRequest("pending", "2026-11-26T00:00:00.000Z")).toBe(false);
+    expect(canReviewEntryRequest("failed", null)).toBe(true);
     expect(canReviewEntryRequest("verifying", null)).toBe(false);
     expect(canReviewEntryRequest("done", null)).toBe(false);
-    expect(canReviewEntryRequest("failed", null)).toBe(false);
     expect(canReviewEntryRequest("rejected", null)).toBe(false);
+    expect(canRejectEntryRequest("pending", null)).toBe(true);
+    expect(canRejectEntryRequest("failed", null)).toBe(false);
   });
 
   it("accepts mapped fields for a pending request", () => {

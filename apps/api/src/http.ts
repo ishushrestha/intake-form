@@ -843,6 +843,7 @@ const workerVerifyResultRoute = HttpRouter.add(
       const parsed = verifyResultSchema.safeParse({
         outcome: textField(form, "outcome"),
         entryId: textField(form, "entryId") || undefined,
+        recordsArtistId: textField(form, "recordsArtistId") || undefined,
         message: textField(form, "message") || undefined,
       });
       if (!parsed.success) {
@@ -850,6 +851,9 @@ const workerVerifyResultRoute = HttpRouter.add(
       }
       if (parsed.data.outcome === "done" && parsed.data.entryId === undefined) {
         return validation({ entryId: "Send the entry ID from the records page." });
+      }
+      if (parsed.data.outcome === "done" && parsed.data.recordsArtistId === undefined) {
+        return validation({ recordsArtistId: "Send the artist ID from the records page." });
       }
       const upload = selectNamedFile(form, "screenshot");
       const inspected = upload.kind === "file" ? yield* inspectUpload(upload.file) : undefined;
@@ -875,6 +879,7 @@ const workerVerifyResultRoute = HttpRouter.add(
         id,
         parsed.data.outcome,
         parsed.data.entryId,
+        parsed.data.recordsArtistId,
         parsed.data.message,
         screenshot,
       );

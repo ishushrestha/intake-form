@@ -93,12 +93,20 @@ async function createRequest(
 async function completeVerify(
   id: string,
   outcome: "done" | "failed",
-  extra: { readonly entryId?: string; readonly message?: string; readonly screenshot?: boolean } = {},
+  extra: {
+    readonly entryId?: string;
+    readonly recordsArtistId?: string;
+    readonly message?: string;
+    readonly screenshot?: boolean;
+  } = {},
 ): Promise<Response> {
   const body = new FormData();
   body.set("outcome", outcome);
   if (extra.entryId !== undefined) {
     body.set("entryId", extra.entryId);
+  }
+  if (extra.recordsArtistId !== undefined) {
+    body.set("recordsArtistId", extra.recordsArtistId);
   }
   if (extra.message !== undefined) {
     body.set("message", extra.message);
@@ -197,15 +205,25 @@ describe("LLM entry request status transitions", () => {
     const listBody = (await listed.json()) as { requests: Array<{ id: string; status: string }> };
     expect(listBody.requests.find((row) => row.id === created.id)?.status).toBe("verifying");
 
-    const done = await completeVerify(job.id, "done", { entryId: "81c06fd9-4c3a-4bd1-9958-ed4ebd3aad0b" });
+    const missingArtist = await completeVerify(job.id, "done", {
+      entryId: "81c06fd9-4c3a-4bd1-9958-ed4ebd3aad0b",
+    });
+    expect(missingArtist.status).toBe(400);
+
+    const done = await completeVerify(job.id, "done", {
+      entryId: "81c06fd9-4c3a-4bd1-9958-ed4ebd3aad0b",
+      recordsArtistId: "A0002",
+    });
     expect(done.status).toBe(200);
     const doneBody = (await done.json()) as {
       status: string;
       entryId: string | null;
+      recordsArtistId: string | null;
       screenshotAvailable: boolean;
     };
     expect(doneBody.status).toBe("done");
     expect(doneBody.entryId).toBe("81c06fd9-4c3a-4bd1-9958-ed4ebd3aad0b");
+    expect(doneBody.recordsArtistId).toBe("A0002");
     expect(doneBody.screenshotAvailable).toBe(true);
 
     const screenshot = await app.handler(
@@ -374,5 +392,85 @@ describe("LLM entry request status transitions", () => {
     const listed = await app.handler(new Request("http://localhost/api/admin/entry-requests", { headers: { cookie } }));
     const listBody = (await listed.json()) as { requests: Array<{ id: string; status: string }> };
     expect(listBody.requests.find((row) => row.id === created.id)?.status).toBe("verifying");
+  });
+
+  it("lets an admin retry a failed request without creating a second row or double-claiming", async () => {
+    const cookie = await adminCookie();
+    const submissionId = await submit("rec_entry_retry");
+    const created = await createRequest(submissionId, "A0007");
+    expect(
+      (
+        await app.handler(
+          new Request(`http://localhost/api/admin/entry-requests/${created.id}/verify`, {
+            method: "POST",
+            headers: { cookie },
+          }),
+        )
+      ).status,
+    ).toBe(200);
+    const firstClaim = await app.handler(
+      new Request("http://localhost/api/worker/entry-requests/claim", {
+        method: "POST",
+        headers: workerHeaders(),
+      }),
+    );
+    const firstJob = (await firstClaim.json()) as { id: string };
+    expect(
+      (await completeVerify(firstJob.id, "failed", { message: "records-admin login failed" })).status,
+    ).toBe(200);
+
+    const retry = await app.handler(
+      new Request(`http://localhost/api/admin/entry-requests/${created.id}/verify`, {
+        method: "POST",
+        headers: { cookie },
+      }),
+    );
+    expect(retry.status).toBe(200);
+    const retryBody = (await retry.json()) as {
+      id: string;
+      status: string;
+      verifyRequestedAt: string | null;
+      failureReason: string | null;
+    };
+    expect(retryBody.id).toBe(created.id);
+    expect(retryBody.status).toBe("pending");
+    expect(retryBody.verifyRequestedAt).toEqual(expect.any(String));
+    expect(retryBody.failureReason).toBeNull();
+
+    const again = await app.handler(
+      new Request(`http://localhost/api/admin/entry-requests/${created.id}/verify`, {
+        method: "POST",
+        headers: { cookie },
+      }),
+    );
+    expect(again.status).toBe(409);
+
+    const secondClaim = await app.handler(
+      new Request("http://localhost/api/worker/entry-requests/claim", {
+        method: "POST",
+        headers: workerHeaders(),
+      }),
+    );
+    expect(secondClaim.status).toBe(200);
+    expect(((await secondClaim.json()) as { id: string }).id).toBe(created.id);
+
+    const thirdClaim = await app.handler(
+      new Request("http://localhost/api/worker/entry-requests/claim", {
+        method: "POST",
+        headers: workerHeaders(),
+      }),
+    );
+    expect(thirdClaim.status).toBe(204);
+
+    const done = await completeVerify(created.id, "done", {
+      entryId: "entry-retry-1",
+      recordsArtistId: "A0001",
+    });
+    expect(done.status).toBe(200);
+    expect(((await done.json()) as { status: string; recordsArtistId: string }).recordsArtistId).toBe("A0001");
+
+    const listed = await app.handler(new Request("http://localhost/api/admin/entry-requests", { headers: { cookie } }));
+    const listBody = (await listed.json()) as { requests: Array<{ id: string; submissionId: string }> };
+    expect(listBody.requests.filter((row) => row.submissionId === submissionId)).toHaveLength(1);
   });
 });

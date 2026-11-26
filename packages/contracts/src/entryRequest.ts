@@ -34,6 +34,7 @@ export const entryRequestSchema = z.object({
   address: z.string(),
   notes: z.string().nullable(),
   entryId: z.string().nullable(),
+  recordsArtistId: z.string().nullable(),
   failureReason: z.string().nullable(),
   screenshotAvailable: z.boolean(),
   verifyRequestedAt: z.iso.datetime().nullable(),
@@ -72,12 +73,20 @@ export type VerifyOutcome = z.infer<typeof verifyOutcomeSchema>;
 export const verifyResultSchema = z.object({
   outcome: verifyOutcomeSchema,
   entryId: z.string().trim().min(1).max(200).optional(),
+  recordsArtistId: z.string().trim().min(1).max(64).optional(),
   message: z.string().trim().max(2000).optional(),
 });
 
 export type VerifyResultBody = z.infer<typeof verifyResultSchema>;
 
 export function canReviewEntryRequest(
+  status: EntryRequestStatus,
+  verifyRequestedAt: string | null,
+): boolean {
+  return (status === "pending" && verifyRequestedAt === null) || status === "failed";
+}
+
+export function canRejectEntryRequest(
   status: EntryRequestStatus,
   verifyRequestedAt: string | null,
 ): boolean {

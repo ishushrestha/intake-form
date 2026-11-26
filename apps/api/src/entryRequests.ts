@@ -42,6 +42,7 @@ export class EntryRequests extends Context.Service<
       id: string,
       outcome: VerifyOutcome,
       entryId: string | undefined,
+      recordsArtistId: string | undefined,
       message: string | undefined,
       screenshot: { readonly bytes: Uint8Array; readonly mimeType: StoredScreenshot["mimeType"] } | undefined,
     ) => Effect.Effect<RequestUpdate, StorageError>;
@@ -52,7 +53,7 @@ export class EntryRequests extends Context.Service<
 const SELECT_LIST = `
   SELECT
     id, submission_id, status, artist_id, artist_name, first_name, last_name, address,
-    notes, entry_id, failure_reason, screenshot_path, verify_requested_at, created_at, updated_at
+    notes, entry_id, records_artist_id, failure_reason, screenshot_path, verify_requested_at, created_at, updated_at
   FROM entry_requests
 `;
 
@@ -107,6 +108,7 @@ function toEntryRequest(row: Row): EntryRequest | StorageError {
       address: takeString(requireString(row, "address")),
       notes: takeOptional(optionalString(row, "notes")),
       entryId: takeOptional(optionalString(row, "entry_id")),
+      recordsArtistId: takeOptional(optionalString(row, "records_artist_id")),
       failureReason: takeOptional(optionalString(row, "failure_reason")),
       screenshotAvailable: screenshotPath !== null && screenshotPath.length > 0,
       verifyRequestedAt: takeOptional(optionalString(row, "verify_requested_at")),
@@ -258,8 +260,15 @@ export const EntryRequestsLive = Layer.effect(
           const updated = yield* database.execute(
             `
             UPDATE entry_requests
-            SET verify_requested_at = ?, updated_at = ?
-            WHERE id = ? AND status = 'pending' AND verify_requested_at IS NULL
+            SET status = 'pending',
+                verify_requested_at = ?,
+                failure_reason = NULL,
+                updated_at = ?
+            WHERE id = ?
+              AND (
+                (status = 'pending' AND verify_requested_at IS NULL)
+                OR status = 'failed'
+              )
             RETURNING id
             `,
             [now, now, id],
@@ -318,7 +327,7 @@ export const EntryRequestsLive = Layer.effect(
             return yield* Effect.fail(failStorage(cause));
           }
         }).pipe(Effect.mapError(failStorage)),
-      completeVerify: (id, outcome, entryId, message, screenshot) =>
+      completeVerify: (id, outcome, entryId, recordsArtistId, message, screenshot) =>
         Effect.gen(function* () {
           const existing = yield* load(id);
           if (existing === undefined) {
@@ -345,6 +354,7 @@ export const EntryRequestsLive = Layer.effect(
             UPDATE entry_requests
             SET status = ?,
                 entry_id = ?,
+                records_artist_id = ?,
                 failure_reason = ?,
                 screenshot_path = ?,
                 updated_at = ?
@@ -354,6 +364,7 @@ export const EntryRequestsLive = Layer.effect(
             [
               status,
               outcome === "done" ? (entryId ?? null) : null,
+              outcome === "done" ? (recordsArtistId ?? null) : null,
               outcome === "failed" ? (message ?? null) : null,
               screenshotPath,
               now,
