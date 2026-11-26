@@ -11,6 +11,8 @@ export interface AdminDetailViewProps {
   readonly error?: string;
   readonly onBack: () => void;
   readonly onGoHome: () => void;
+  readonly onGoToSubmissions: () => void;
+  readonly onGoToEntryRequests: () => void;
   readonly onVerify: () => void;
   readonly onReject: () => void;
   readonly onApprove: () => void;
@@ -22,7 +24,12 @@ export function AdminDetailView(props: AdminDetailViewProps) {
   const submission = props.submission;
 
   return (
-    <AdminShell onGoHome={props.onGoHome} onLogout={props.onLogout}>
+    <AdminShell
+      onGoHome={props.onGoHome}
+      onGoToEntryRequests={props.onGoToEntryRequests}
+      onGoToSubmissions={props.onGoToSubmissions}
+      onLogout={props.onLogout}
+    >
       <div className="space-y-6">
         <Button onClick={props.onBack} type="button" variant="outline">
           Back to submissions
@@ -124,7 +131,9 @@ export function AdminDetailView(props: AdminDetailViewProps) {
                   <p className="text-sm text-muted-foreground">The local worker is checking this submission.</p>
                 ) : null}
                 {submission.status === "sent_to_records" ? (
-                  <p className="text-sm text-muted-foreground">Sent to the record manager.</p>
+                  <p className="text-sm text-muted-foreground">
+                    The worker saved a pending LLM entry request. Review it under LLM entry requests.
+                  </p>
                 ) : null}
                 {submission.status === "approved" ? <p className="text-sm text-muted-foreground">This submission was approved.</p> : null}
                 {submission.status === "rejected" ? <p className="text-sm text-muted-foreground">This submission was rejected.</p> : null}

@@ -32,6 +32,29 @@ const CREATE_INDEX = `
 CREATE INDEX IF NOT EXISTS submissions_status_created_at
   ON submissions (status, created_at DESC)`;
 
+const CREATE_ENTRY_REQUESTS = `
+CREATE TABLE IF NOT EXISTS entry_requests (
+  id TEXT PRIMARY KEY,
+  submission_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'verifying', 'done', 'failed', 'rejected')),
+  artist_id TEXT NOT NULL,
+  artist_name TEXT NOT NULL,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL,
+  address TEXT NOT NULL,
+  notes TEXT,
+  entry_id TEXT,
+  failure_reason TEXT,
+  screenshot_path TEXT,
+  verify_requested_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+)`;
+
+const CREATE_ENTRY_REQUESTS_INDEX = `
+CREATE INDEX IF NOT EXISTS entry_requests_status_created_at
+  ON entry_requests (status, created_at DESC)`;
+
 const OPTIONAL_COLUMNS = [
   "verified_at",
   "rejected_at",
@@ -87,6 +110,8 @@ async function migrate(client: Client): Promise<void> {
     }
   }
   await client.execute(CREATE_INDEX);
+  await client.execute(CREATE_ENTRY_REQUESTS);
+  await client.execute(CREATE_ENTRY_REQUESTS_INDEX);
 }
 
 export class Database extends Context.Service<

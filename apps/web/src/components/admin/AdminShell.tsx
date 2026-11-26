@@ -8,10 +8,14 @@ function isPlainLeftClick(event: MouseEvent<HTMLAnchorElement>): boolean {
 export function AdminShell({
   children,
   onGoHome,
+  onGoToSubmissions,
+  onGoToEntryRequests,
   onLogout,
 }: {
   readonly children: ReactNode;
   readonly onGoHome: () => void;
+  readonly onGoToSubmissions: () => void;
+  readonly onGoToEntryRequests: () => void;
   readonly onLogout: () => void;
 }) {
   return (
@@ -20,19 +24,47 @@ export function AdminShell({
         <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="text-sm font-medium tracking-[0.18em] text-primary uppercase">Admin</p>
-            <a
-              className="text-sm text-muted-foreground underline-offset-4 hover:underline"
-              href="/"
-              onClick={(event) => {
-                if (!isPlainLeftClick(event)) {
-                  return;
-                }
-                event.preventDefault();
-                onGoHome();
-              }}
-            >
-              Public intake
-            </a>
+            <nav className="mt-2 flex flex-wrap gap-4 text-sm">
+              <a
+                className="text-muted-foreground underline-offset-4 hover:underline"
+                href="/admin"
+                onClick={(event) => {
+                  if (!isPlainLeftClick(event)) {
+                    return;
+                  }
+                  event.preventDefault();
+                  onGoToSubmissions();
+                }}
+              >
+                Submissions
+              </a>
+              <a
+                className="text-muted-foreground underline-offset-4 hover:underline"
+                href="/admin/entry-requests"
+                onClick={(event) => {
+                  if (!isPlainLeftClick(event)) {
+                    return;
+                  }
+                  event.preventDefault();
+                  onGoToEntryRequests();
+                }}
+              >
+                LLM entry requests
+              </a>
+              <a
+                className="text-muted-foreground underline-offset-4 hover:underline"
+                href="/"
+                onClick={(event) => {
+                  if (!isPlainLeftClick(event)) {
+                    return;
+                  }
+                  event.preventDefault();
+                  onGoHome();
+                }}
+              >
+                Public intake
+              </a>
+            </nav>
           </div>
           <Button onClick={onLogout} type="button" variant="outline">
             Log out

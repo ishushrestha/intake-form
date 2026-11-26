@@ -1,6 +1,7 @@
 import type { MouseEvent } from "react";
 import { Navigate, Route, Routes, useNavigate } from "react-router";
 import { AdminDetailPage } from "@/admin/AdminDetailPage";
+import { AdminEntryRequestsPage } from "@/admin/AdminEntryRequestsPage";
 import { AdminGuard } from "@/admin/AdminGuard";
 import { AdminListPage } from "@/admin/AdminListPage";
 import { AdminLoginPage } from "@/admin/AdminLoginPage";
@@ -81,6 +82,14 @@ export function App() {
           </AdminGuard>
         }
         path="/admin/submissions/:id"
+      />
+      <Route
+        element={
+          <AdminGuard>
+            <AdminEntryRequestsPage />
+          </AdminGuard>
+        }
+        path="/admin/entry-requests"
       />
       <Route element={<Navigate replace to="/" />} path="*" />
     </Routes>
