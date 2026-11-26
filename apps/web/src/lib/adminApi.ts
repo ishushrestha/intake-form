@@ -1,4 +1,12 @@
-import { submissionListSchema, submissionSchema, type Submission, type SubmissionStatus } from "@intake/contracts";
+import {
+  entryRequestListSchema,
+  entryRequestSchema,
+  submissionListSchema,
+  submissionSchema,
+  type EntryRequest,
+  type Submission,
+  type SubmissionStatus,
+} from "@intake/contracts";
 
 export class AdminApiError extends Error {
   readonly status: number;
@@ -86,6 +94,33 @@ export async function submitToRecords(id: string): Promise<Submission> {
   const parsed = submissionSchema.safeParse(await response.json());
   if (!parsed.success) {
     throw new AdminApiError(response.status, "Could not queue the submission.");
+  }
+  return parsed.data;
+}
+
+export async function fetchEntryRequests(): Promise<readonly EntryRequest[]> {
+  const response = await fetch("/api/admin/entry-requests", { credentials: "include" });
+  if (!response.ok) {
+    throw await readError(response, "Could not load entry requests.");
+  }
+  const parsed = entryRequestListSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new AdminApiError(response.status, "Could not load entry requests.");
+  }
+  return parsed.data.requests;
+}
+
+export async function reviewEntryRequest(id: string, action: "verify" | "reject"): Promise<EntryRequest> {
+  const response = await fetch(`/api/admin/entry-requests/${id}/${action}`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw await readError(response, "Could not update the entry request.");
+  }
+  const parsed = entryRequestSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new AdminApiError(response.status, "Could not update the entry request.");
   }
   return parsed.data;
 }

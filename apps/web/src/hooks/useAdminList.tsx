@@ -69,6 +69,12 @@ export function useAdminList(): AdminListViewProps {
     onGoHome: () => {
       void navigate("/");
     },
+    onGoToSubmissions: () => {
+      void navigate("/admin");
+    },
+    onGoToEntryRequests: () => {
+      void navigate("/admin/entry-requests");
+    },
     onOpen: (id) => {
       void navigate(`/admin/submissions/${id}`);
     },

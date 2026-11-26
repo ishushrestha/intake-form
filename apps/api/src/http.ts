@@ -1,11 +1,14 @@
 import { NodeServices } from "@effect/platform-node";
 import {
   IMAGE_MAX_BYTES,
+  createEntryRequestSchema,
   createSubmissionFieldsSchema,
   fieldErrorsFromZod,
   imageMimeTypeSchema,
   submissionStatusSchema,
   submissionStatuses,
+  verifyJobSchema,
+  verifyResultSchema,
   workerJobSchema,
   workerResultSchema,
   type ApiErrorBody,
@@ -26,6 +29,7 @@ import type { AppConfig } from "./config.js";
 import { DatabaseLive } from "./db.js";
 import { StorageError, TransitionError } from "./errors.js";
 import { AppConfigService } from "./services.js";
+import { EntryRequests, EntryRequestsLive, type StoredScreenshot } from "./entryRequests.js";
 import { Submissions, SubmissionsLive, type StoredImage } from "./submissions.js";
 import { bearerToken, tokenMatches } from "./workerAuth.js";
 
@@ -55,8 +59,8 @@ function validation(fields: Record<string, string>, message = "Check the highlig
   return json(400, errorBody("validation_error", message, fields));
 }
 
-function notFound() {
-  return json(404, errorBody("not_found", "No submission exists with that id."));
+function notFound(message = "No submission exists with that id.") {
+  return json(404, errorBody("not_found", message));
 }
 
 function internalError() {
@@ -185,6 +189,25 @@ function requestUrl(request: HttpServerRequest.HttpServerRequest): URL {
 
 function workerImageUrl(id: string): string {
   return `/api/worker/jobs/${id}/image`;
+}
+
+function workerRequestImageUrl(id: string): string {
+  return `/api/worker/entry-requests/${id}/image`;
+}
+
+function selectNamedFile(form: Multipart.Persisted, key: string): UploadSelection {
+  const value = form[key];
+  if (value === undefined || typeof value === "string" || !Array.isArray(value) || value.length === 0) {
+    return { kind: "missing" };
+  }
+  if (value.length !== 1) {
+    return { kind: "multiple" };
+  }
+  const first = value[0];
+  if (first === undefined || !Multipart.isPersistedFile(first)) {
+    return { kind: "missing" };
+  }
+  return { kind: "file", file: first };
 }
 
 function routeId(params: Readonly<Record<string, string | undefined>>): string | undefined {
@@ -377,6 +400,17 @@ function imageResponse(image: StoredImage) {
       "x-content-type-options": "nosniff",
       "cache-control": "private, no-store",
       "content-disposition": `inline; filename="${filename}"`,
+    },
+  });
+}
+
+function screenshotResponse(image: StoredScreenshot) {
+  return HttpServerResponse.raw(image.bytes, {
+    contentType: image.mimeType,
+    headers: {
+      "x-content-type-options": "nosniff",
+      "cache-control": "private, no-store",
+      "content-disposition": 'inline; filename="screenshot.png"',
     },
   });
 }
@@ -620,6 +654,246 @@ const workerResultRoute = HttpRouter.add(
   ),
 );
 
+const createEntryRequestRoute = HttpRouter.add(
+  "POST",
+  "/api/worker/entry-requests",
+  recover(
+    Effect.gen(function* () {
+      const access = yield* authorizeWorker;
+      if (!access.ok) {
+        return access.response;
+      }
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const raw = yield* request.text.pipe(
+        Effect.provideService(HttpIncomingMessage.MaxBodySize)(ByteSize.bytes(16 * 1024)),
+      );
+      let payload: unknown;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        return validation({ sourceSubmissionId: "Send the mapped entry as JSON." });
+      }
+      const parsed = createEntryRequestSchema.safeParse(payload);
+      if (!parsed.success) {
+        return validation(fieldErrorsFromZod(parsed.error), "Check the entry request.");
+      }
+      const entryRequests = yield* EntryRequests;
+      const created = yield* entryRequests.create(parsed.data);
+      if (created === undefined) {
+        return notFound();
+      }
+      return json(created.createdAt === created.updatedAt ? 201 : 200, created);
+    }),
+  ),
+);
+
+const listEntryRequestsRoute = HttpRouter.add(
+  "GET",
+  "/api/admin/entry-requests",
+  recover(
+    Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
+      const entryRequests = yield* EntryRequests;
+      const rows = yield* entryRequests.list();
+      return json(200, { requests: rows });
+    }),
+  ),
+);
+
+const verifyEntryRequestRoute = HttpRouter.add(
+  "POST",
+  "/api/admin/entry-requests/:id/verify",
+  recover(
+    Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
+      const id = routeId(yield* HttpRouter.params);
+      if (id === undefined) {
+        return notFound("No entry request exists with that id.");
+      }
+      const entryRequests = yield* EntryRequests;
+      const result = yield* entryRequests.requestVerify(id);
+      if (result === "conflict") {
+        return conflict();
+      }
+      if (result === undefined) {
+        return notFound("No entry request exists with that id.");
+      }
+      return json(200, result);
+    }),
+  ),
+);
+
+const rejectEntryRequestRoute = HttpRouter.add(
+  "POST",
+  "/api/admin/entry-requests/:id/reject",
+  recover(
+    Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
+      const id = routeId(yield* HttpRouter.params);
+      if (id === undefined) {
+        return notFound("No entry request exists with that id.");
+      }
+      const entryRequests = yield* EntryRequests;
+      const result = yield* entryRequests.reject(id);
+      if (result === "conflict") {
+        return conflict();
+      }
+      if (result === undefined) {
+        return notFound("No entry request exists with that id.");
+      }
+      return json(200, result);
+    }),
+  ),
+);
+
+const entryRequestScreenshotRoute = HttpRouter.add(
+  "GET",
+  "/api/admin/entry-requests/:id/screenshot",
+  recover(
+    Effect.gen(function* () {
+      if (!(yield* ensureAdmin)) {
+        return unauthorized();
+      }
+      const id = routeId(yield* HttpRouter.params);
+      if (id === undefined) {
+        return notFound("No entry request exists with that id.");
+      }
+      const entryRequests = yield* EntryRequests;
+      const screenshot = yield* entryRequests.readScreenshot(id);
+      if (screenshot === undefined) {
+        return notFound("No screenshot exists for that entry request.");
+      }
+      return screenshotResponse(screenshot);
+    }),
+  ),
+);
+
+const claimVerifyRoute = HttpRouter.add(
+  "POST",
+  "/api/worker/entry-requests/claim",
+  recover(
+    Effect.gen(function* () {
+      const access = yield* authorizeWorker;
+      if (!access.ok) {
+        return access.response;
+      }
+      const entryRequests = yield* EntryRequests;
+      const claimed = yield* entryRequests.claimVerify(new Date());
+      if (claimed === undefined) {
+        return HttpServerResponse.empty();
+      }
+      const job = verifyJobSchema.parse({
+        ...claimed,
+        imageUrl: workerRequestImageUrl(claimed.id),
+      });
+      return json(200, job);
+    }),
+  ),
+);
+
+const workerRequestImageRoute = HttpRouter.add(
+  "GET",
+  "/api/worker/entry-requests/:id/image",
+  recover(
+    Effect.gen(function* () {
+      const access = yield* authorizeWorker;
+      if (!access.ok) {
+        return access.response;
+      }
+      const id = routeId(yield* HttpRouter.params);
+      if (id === undefined) {
+        return notFound("No entry request exists with that id.");
+      }
+      const entryRequests = yield* EntryRequests;
+      const request = yield* entryRequests.get(id);
+      if (request === undefined) {
+        return notFound("No entry request exists with that id.");
+      }
+      const submissions = yield* Submissions;
+      const image = yield* submissions.readImage(request.submissionId);
+      if (image === undefined) {
+        return notFound();
+      }
+      return imageResponse(image);
+    }),
+  ),
+);
+
+const workerVerifyResultRoute = HttpRouter.add(
+  "POST",
+  "/api/worker/entry-requests/:id/result",
+  recover(
+    Effect.gen(function* () {
+      const access = yield* authorizeWorker;
+      if (!access.ok) {
+        return access.response;
+      }
+      const id = routeId(yield* HttpRouter.params);
+      if (id === undefined) {
+        return notFound("No entry request exists with that id.");
+      }
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const form = yield* readMultipart(request);
+      const parsed = verifyResultSchema.safeParse({
+        outcome: textField(form, "outcome"),
+        entryId: textField(form, "entryId") || undefined,
+        recordsArtistId: textField(form, "recordsArtistId") || undefined,
+        message: textField(form, "message") || undefined,
+      });
+      if (!parsed.success) {
+        return validation(fieldErrorsFromZod(parsed.error), "Check the verification result.");
+      }
+      if (parsed.data.outcome === "done" && parsed.data.entryId === undefined) {
+        return validation({ entryId: "Send the entry ID from the records page." });
+      }
+      if (parsed.data.outcome === "done" && parsed.data.recordsArtistId === undefined) {
+        return validation({ recordsArtistId: "Send the artist ID from the records page." });
+      }
+      const upload = selectNamedFile(form, "screenshot");
+      const inspected = upload.kind === "file" ? yield* inspectUpload(upload.file) : undefined;
+      if (parsed.data.outcome === "done" && (upload.kind !== "file" || inspected === undefined || !inspected.ok)) {
+        return validation({ screenshot: "Attach a PNG, JPEG, or WebP screenshot." });
+      }
+      if (upload.kind === "multiple") {
+        return validation({ screenshot: "Attach a single screenshot." });
+      }
+      if (upload.kind === "file" && inspected !== undefined && !inspected.ok) {
+        return validation({ screenshot: inspected.message });
+      }
+      let screenshot: { readonly bytes: Uint8Array; readonly mimeType: StoredScreenshot["mimeType"] } | undefined;
+      if (upload.kind === "file" && inspected !== undefined && inspected.ok) {
+        const fs = yield* FileSystem.FileSystem;
+        const bytes = yield* fs
+          .readFile(upload.file.path)
+          .pipe(Effect.mapError((cause) => new StorageError({ cause })));
+        screenshot = { bytes, mimeType: inspected.mimeType };
+      }
+      const entryRequests = yield* EntryRequests;
+      const result = yield* entryRequests.completeVerify(
+        id,
+        parsed.data.outcome,
+        parsed.data.entryId,
+        parsed.data.recordsArtistId,
+        parsed.data.message,
+        screenshot,
+      );
+      if (result === "conflict") {
+        return conflict();
+      }
+      if (result === undefined) {
+        return notFound("No entry request exists with that id.");
+      }
+      return json(200, result);
+    }),
+  ),
+);
+
 const sessionRoute = HttpRouter.add(
   "GET",
   "/api/admin/session",
@@ -636,6 +910,11 @@ const sessionRoute = HttpRouter.add(
 export const makeRoutes = (config: AppConfig) => {
   const configLayer = Layer.succeed(AppConfigService, config);
   const submissions = SubmissionsLive.pipe(
+    Layer.provide(DatabaseLive),
+    Layer.provide(configLayer),
+    Layer.provide(NodeServices.layer),
+  );
+  const entryRequests = EntryRequestsLive.pipe(
     Layer.provide(DatabaseLive),
     Layer.provide(configLayer),
     Layer.provide(NodeServices.layer),
@@ -658,6 +937,14 @@ export const makeRoutes = (config: AppConfig) => {
     claimJobRoute,
     workerImageRoute,
     workerResultRoute,
+    createEntryRequestRoute,
+    listEntryRequestsRoute,
+    verifyEntryRequestRoute,
+    rejectEntryRequestRoute,
+    entryRequestScreenshotRoute,
+    claimVerifyRoute,
+    workerRequestImageRoute,
+    workerVerifyResultRoute,
     HttpRouter.cors({
       allowedOrigins: [config.webOrigin],
       allowedMethods: ["GET", "POST"],
@@ -666,6 +953,7 @@ export const makeRoutes = (config: AppConfig) => {
     }),
   ).pipe(
     HttpRouter.provideRequest(submissions),
+    HttpRouter.provideRequest(entryRequests),
     HttpRouter.provideRequest(auth),
     HttpRouter.provideRequest(configLayer),
     HttpRouter.provideRequest(NodeServices.layer),

@@ -6,9 +6,11 @@ try {
   loadEnvFile();
   const config = loadWorkerConfig();
   console.log(`[worker] intake ${config.intakeApiUrl}`);
-  console.log(`[worker] records ${config.recordsApiUrl}`);
+  console.log(`[worker] records-admin ${config.recordsAdminUrl}`);
   console.log(`[worker] ollama ${config.ollamaModel} at ${config.ollamaUrl}`);
-  console.log(`[worker] polling every ${config.pollSeconds}s. This process does not listen on a port.`);
+  console.log(
+    `[worker] polling every ${config.pollSeconds}s${config.headed ? ", headed browser" : ""}. This process does not listen on a port.`,
+  );
   const controller = new AbortController();
   process.on("SIGINT", () => {
     controller.abort();

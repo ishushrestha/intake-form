@@ -1,11 +1,13 @@
 export interface WorkerConfig {
   readonly intakeApiUrl: string;
   readonly intakeWorkerToken: string;
-  readonly recordsApiUrl: string;
-  readonly recordsWorkerToken: string;
+  readonly recordsAdminUrl: string;
+  readonly recordsAdminUser: string;
+  readonly recordsAdminPassword: string;
   readonly ollamaUrl: string;
   readonly ollamaModel: string;
   readonly pollSeconds: number;
+  readonly headed: boolean;
 }
 
 export function isLoopbackHostname(hostname: string): boolean {
@@ -23,8 +25,8 @@ export function isLoopbackHostname(hostname: string): boolean {
   return parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
-function requiredUrl(env: NodeJS.ProcessEnv, key: string): string {
-  const raw = env[key]?.trim();
+function requiredUrl(env: NodeJS.ProcessEnv, key: string, fallback?: string): string {
+  const raw = env[key]?.trim() || fallback;
   if (raw === undefined || raw.length === 0) {
     throw new Error(`${key} is required.`);
   }
@@ -76,10 +78,16 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
   return {
     intakeApiUrl: requiredUrl(env, "INTAKE_API_URL"),
     intakeWorkerToken: requiredSecret(env, "INTAKE_WORKER_TOKEN"),
-    recordsApiUrl: requiredUrl(env, "RECORDS_API_URL"),
-    recordsWorkerToken: requiredSecret(env, "RECORDS_WORKER_TOKEN"),
+    recordsAdminUrl: requiredUrl(env, "RECORDS_ADMIN_URL", "http://localhost:5174"),
+    recordsAdminUser: requiredSecret(env, "RECORDS_ADMIN_USER"),
+    recordsAdminPassword: requiredSecret(env, "RECORDS_ADMIN_PASSWORD"),
     ollamaUrl: ollama,
     ollamaModel: model === undefined || model.length === 0 ? "qwen2.5:3b" : model,
     pollSeconds: pollSeconds(env.POLL_SECONDS),
+    headed: env.HEADED?.trim().toLowerCase() === "true",
   };
+}
+
+export function workerAllowedBaseUrls(config: WorkerConfig): readonly string[] {
+  return [config.intakeApiUrl, config.recordsAdminUrl, config.ollamaUrl];
 }

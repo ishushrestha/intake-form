@@ -62,6 +62,12 @@ export function useAdminDetail(): AdminDetailViewProps {
     onGoHome: () => {
       void navigate("/");
     },
+    onGoToSubmissions: () => {
+      void navigate("/admin");
+    },
+    onGoToEntryRequests: () => {
+      void navigate("/admin/entry-requests");
+    },
     onVerify: () => {
       review.mutate("verify");
     },

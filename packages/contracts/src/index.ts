@@ -40,3 +40,27 @@ export type {
   WorkerOutcome,
   WorkerResultBody,
 } from "./submission.js";
+
+export {
+  canRejectEntryRequest,
+  canReviewEntryRequest,
+  createEntryRequestSchema,
+  entryRequestListSchema,
+  entryRequestSchema,
+  entryRequestStatuses,
+  entryRequestStatusSchema,
+  verifyJobSchema,
+  verifyOutcomeSchema,
+  verifyOutcomes,
+  verifyResultSchema,
+} from "./entryRequest.js";
+
+export type {
+  CreateEntryRequestBody,
+  EntryRequest,
+  EntryRequestList,
+  EntryRequestStatus,
+  VerifyJob,
+  VerifyOutcome,
+  VerifyResultBody,
+} from "./entryRequest.js";

@@ -13,6 +13,8 @@ export interface AdminListViewProps {
   readonly isLoading: boolean;
   readonly error?: string;
   readonly onGoHome: () => void;
+  readonly onGoToSubmissions: () => void;
+  readonly onGoToEntryRequests: () => void;
   readonly onOpen: (id: string) => void;
   readonly onQueryChange: (value: string) => void;
   readonly onStatusChange: (value: SubmissionStatus | "all") => void;
@@ -27,7 +29,12 @@ export function AdminListView(props: AdminListViewProps) {
   const rows = props.table.getRowModel().rows;
 
   return (
-    <AdminShell onGoHome={props.onGoHome} onLogout={props.onLogout}>
+    <AdminShell
+      onGoHome={props.onGoHome}
+      onGoToEntryRequests={props.onGoToEntryRequests}
+      onGoToSubmissions={props.onGoToSubmissions}
+      onLogout={props.onLogout}
+    >
       <div className="space-y-6">
         <div className="space-y-2">
           <h1 className="text-4xl tracking-tight">Submissions</h1>
