@@ -13,4 +13,6 @@
 .github
 deploy
 **/.DS_Store
+*.pem
+**/*.pem
 vite.config.ts.timestamp-*

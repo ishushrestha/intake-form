@@ -259,16 +259,20 @@ docker compose version
 
 4. Clone both repos side by side in your home directory. records-admin must be a sibling of intake-form (compose builds it from `../../records-admin`).
 
+Until both PRs are merged, check out the Docker branches. `main` does not have `deploy/` in intake-form (or the records-admin Dockerfile) yet.
+
 ```bash
 cd ~
 git clone https://github.com/ishushrestha/intake-form.git
 git clone https://github.com/ishushrestha/records-admin.git
+cd ~/intake-form
+git checkout cursor/vps-https-hardening-2c71
 cd ~/records-admin
 git checkout cursor/vps-https-caddy-4b05
 cd ~/intake-form
 ```
 
-Compose builds records-admin from `~/records-admin` (its Dockerfile is on `cursor/vps-https-caddy-4b05`). The image stores SQLite and uploads under `/data`.
+Once both PRs are merged, leave both repos on `main` and skip the `git checkout` lines. Compose builds records-admin from `~/records-admin`. The records-admin image stores SQLite and uploads under `/data`.
 
 5. Create `deploy/.env`. Secrets never go in git.
 
