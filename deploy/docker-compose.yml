@@ -11,8 +11,6 @@ services:
       - "8443:8443"
     environment:
       DOMAIN: ${DOMAIN:-artist-lab.southindia.cloudapp.azure.com}
-      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-tester}
-      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
