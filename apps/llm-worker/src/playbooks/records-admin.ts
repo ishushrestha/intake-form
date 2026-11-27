@@ -1,4 +1,4 @@
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { assertAllowedUrl, type AllowedHostSet } from "../allowlist.js";
 
 export interface RecordsAdminTarget {
@@ -149,14 +149,22 @@ async function createEntry(page: Page, proposed: ProposedRecordsEntry): Promise<
 export function createRecordsAdminPlaybook(options: {
   readonly headed: boolean;
   readonly allowedHosts: AllowedHostSet;
+  readonly httpCredentials?: { readonly username: string; readonly password: string };
 }): RecordsAdminPlaybook {
   return {
     submitEntry: async (target, proposed, screenshotPath) => {
       const origin = assertAllowedUrl(target.baseUrl, options.allowedHosts).origin;
-      const browser = await chromium.launch({ headless: !options.headed });
+      let browser: Browser | undefined;
       let page: Page | undefined;
       try {
-        const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+        browser = await chromium.launch({
+          headless: !options.headed,
+          args: process.env.RUNNING_IN_DOCKER === "1" ? ["--disable-dev-shm-usage", "--no-sandbox"] : [],
+        });
+        const context = await browser.newContext({
+          viewport: { width: 1280, height: 900 },
+          httpCredentials: options.httpCredentials,
+        });
         await applyHostAllowlist(context, options.allowedHosts);
         page = await context.newPage();
         await page.goto(`${origin}/login`, { waitUntil: "networkidle" });
@@ -169,7 +177,9 @@ export function createRecordsAdminPlaybook(options: {
         await screenshotBestEffort(page, screenshotPath);
         throw error;
       } finally {
-        await browser.close();
+        if (browser !== undefined) {
+          await browser.close();
+        }
       }
     },
   };

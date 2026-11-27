@@ -25,13 +25,13 @@ import {
 } from "effect/http";
 import { ADMIN_COOKIE, AdminAuth, AdminAuthLive } from "./auth.js";
 import { approveSubmission } from "./approve.js";
-import type { AppConfig } from "./config.js";
+import { splitOrigins, type AppConfig } from "./config.js";
 import { DatabaseLive } from "./db.js";
 import { StorageError, TransitionError } from "./errors.js";
 import { AppConfigService } from "./services.js";
 import { EntryRequests, EntryRequestsLive, type StoredScreenshot } from "./entryRequests.js";
 import { Submissions, SubmissionsLive, type StoredImage } from "./submissions.js";
-import { bearerToken, tokenMatches } from "./workerAuth.js";
+import { tokenMatches, workerBearerToken } from "./workerAuth.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -98,7 +98,10 @@ const authorizeWorker = Effect.gen(function* () {
     return unavailable;
   }
   const request = yield* HttpServerRequest.HttpServerRequest;
-  const provided = bearerToken(request.headers.authorization);
+  const provided = workerBearerToken(
+    request.headers.authorization,
+    request.headers["x-worker-authorization"],
+  );
   if (provided === undefined || !tokenMatches(provided, config.workerToken)) {
     const denied: WorkerAccess = { ok: false, response: workerUnauthorized() };
     return denied;
@@ -946,9 +949,10 @@ export const makeRoutes = (config: AppConfig) => {
     workerRequestImageRoute,
     workerVerifyResultRoute,
     HttpRouter.cors({
-      allowedOrigins: [config.webOrigin],
+      allowedOrigins: config.allowedOrigins ?? splitOrigins(config.webOrigin),
       allowedMethods: ["GET", "POST"],
       allowedHeaders: ["content-type"],
+      credentials: true,
       maxAge: 600,
     }),
   ).pipe(

@@ -1,5 +1,34 @@
 export type AllowedFetch = (url: string, init?: RequestInit) => Promise<Response>;
 
+export function encodeBasicAuth(user: string, password: string): string {
+  return `Basic ${Buffer.from(`${user}:${password}`, "utf8").toString("base64")}`;
+}
+
+/**
+ * Sends Caddy basic_auth as Authorization and moves an existing Bearer token to
+ * X-Worker-Authorization so the intake API can still read it.
+ */
+export function withBasicAuthorization(
+  fetchImpl: AllowedFetch,
+  host: string,
+  user: string,
+  password: string,
+): AllowedFetch {
+  const authorization = encodeBasicAuth(user, password);
+  return async (url, init) => {
+    if (new URL(url).host !== host) {
+      return fetchImpl(url, init);
+    }
+    const headers = new Headers(init?.headers);
+    const existing = headers.get("authorization");
+    headers.set("authorization", authorization);
+    if (existing !== null && existing.length > 0) {
+      headers.set("x-worker-authorization", existing);
+    }
+    return fetchImpl(url, { ...init, headers });
+  };
+}
+
 export type AllowedHostSet = ReadonlySet<string>;
 
 export function allowedHostsFrom(baseUrls: readonly string[]): AllowedHostSet {

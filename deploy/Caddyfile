@@ -1,0 +1,13 @@
+{$DOMAIN:artist-lab.southindia.cloudapp.azure.com} {
+	basic_auth {
+		{$BASIC_AUTH_USER} {env.BASIC_AUTH_HASH}
+	}
+	reverse_proxy intake:3001
+}
+
+{$DOMAIN:artist-lab.southindia.cloudapp.azure.com}:8443 {
+	basic_auth {
+		{$BASIC_AUTH_USER} {env.BASIC_AUTH_HASH}
+	}
+	reverse_proxy records-admin:3002
+}

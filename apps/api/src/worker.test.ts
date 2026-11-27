@@ -374,6 +374,19 @@ describe("worker API configuration", () => {
     expect(PROCESSING_STALE_MS).toBe(10 * 60 * 1000);
   });
 
+  it("accepts the worker token in x-worker-authorization when Authorization is Basic", async () => {
+    const response = await app.handler(
+      new Request("http://localhost/api/worker/jobs/claim", {
+        method: "POST",
+        headers: {
+          authorization: "Basic dGVzdGVyOnBhc3M=",
+          "x-worker-authorization": `Bearer ${WORKER_TOKEN}`,
+        },
+      }),
+    );
+    expect(response.status === 200 || response.status === 204).toBe(true);
+  });
+
   it("returns 503 when WORKER_TOKEN is unset", async () => {
     const closedDirectory = mkdtempSync(join(tmpdir(), "intake-worker-closed-"));
     const closed = createApp(closedDirectory, { workerToken: null });

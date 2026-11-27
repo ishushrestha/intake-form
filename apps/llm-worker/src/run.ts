@@ -9,7 +9,7 @@ import {
   type WorkerJob,
   type WorkerResultBody,
 } from "@intake/contracts";
-import { allowedHostsFrom, createAllowedFetch, type AllowedFetch } from "./allowlist.js";
+import { allowedHostsFrom, createAllowedFetch, withBasicAuthorization, type AllowedFetch } from "./allowlist.js";
 import { checkAgainstSubmission, parseModelOutput } from "./check.js";
 import { workerAllowedBaseUrls, type WorkerConfig } from "./config.js";
 import { createRecordsAdminPlaybook, type RecordsAdminPlaybook } from "./playbooks/records-admin.js";
@@ -322,16 +322,31 @@ export async function runOnce(deps: WorkerDependencies): Promise<CycleResult> {
   const config = deps.config;
   const log = deps.log ?? (() => undefined);
   const allowedBaseUrls = workerAllowedBaseUrls(config);
-  const fetchImpl = createAllowedFetch({
+  let fetchImpl = createAllowedFetch({
     allowedBaseUrls,
     fetchImpl: deps.fetchImpl ?? fetch,
   });
+  if (config.intakeBasicAuth !== undefined) {
+    fetchImpl = withBasicAuthorization(
+      fetchImpl,
+      new URL(config.intakeApiUrl).host,
+      config.intakeBasicAuth.user,
+      config.intakeBasicAuth.password,
+    );
+  }
   const screenshotDir = deps.screenshotDir ?? join(process.cwd(), "data/screenshots");
   const playbook =
     deps.playbook ??
     createRecordsAdminPlaybook({
       headed: config.headed,
       allowedHosts: allowedHostsFrom(allowedBaseUrls),
+      httpCredentials:
+        config.recordsAdminBasicAuth === undefined
+          ? undefined
+          : {
+              username: config.recordsAdminBasicAuth.user,
+              password: config.recordsAdminBasicAuth.password,
+            },
     });
 
   const verifyJob = await claimVerify(fetchImpl, config);

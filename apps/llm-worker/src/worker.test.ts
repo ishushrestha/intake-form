@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AllowedFetch } from "./allowlist.js";
-import { createAllowedFetch } from "./allowlist.js";
-import { loadWorkerConfig, type WorkerConfig } from "./config.js";
+import { createAllowedFetch, encodeBasicAuth } from "./allowlist.js";
+import { loadWorkerConfig, workerAllowedBaseUrls, type WorkerConfig } from "./config.js";
 import { artistIdFromPageUrl, artistNotFoundMessage, entryIdFromPageUrl } from "./playbooks/records-admin.js";
 import { runOnce } from "./run.js";
 
@@ -35,6 +35,7 @@ interface Call {
   readonly url: string;
   readonly method: string;
   readonly authorization: string | null;
+  readonly workerAuthorization: string | null;
   readonly json: unknown;
   readonly form: FormData | undefined;
   readonly redirect: string | undefined;
@@ -55,6 +56,7 @@ function fakeWorld(options: {
       url,
       method: init?.method ?? "GET",
       authorization: headers.get("authorization"),
+      workerAuthorization: headers.get("x-worker-authorization"),
       json,
       form,
       redirect: init?.redirect,
@@ -274,6 +276,72 @@ describe("local worker", () => {
     expect(loadWorkerConfig(baseEnv).headed).toBe(false);
     expect(loadWorkerConfig({ ...baseEnv, HEADED: "true" }).headed).toBe(true);
     expect(() => loadWorkerConfig({ ...baseEnv, RECORDS_WORKER_TOKEN: "leftover" })).not.toThrow();
+  });
+
+  it("allows Docker Compose service hostnames from env without extra keys", () => {
+    const loaded = loadWorkerConfig({
+      ...baseEnv,
+      INTAKE_API_URL: "http://intake:3001",
+      RECORDS_ADMIN_URL: "http://records-admin:3002",
+      OLLAMA_URL: "http://ollama:11434",
+    });
+    expect(loaded.intakeApiUrl).toBe("http://intake:3001");
+    expect(loaded.recordsAdminUrl).toBe("http://records-admin:3002");
+    expect(loaded.ollamaUrl).toBe("http://ollama:11434");
+    expect(loaded.intakeBasicAuth).toBeUndefined();
+    expect(loaded.recordsAdminBasicAuth).toBeUndefined();
+    expect(workerAllowedBaseUrls(loaded)).toEqual([
+      "http://intake:3001",
+      "http://records-admin:3002",
+      "http://ollama:11434",
+    ]);
+    expect(loadWorkerConfig(baseEnv).ollamaUrl).toBe("http://127.0.0.1:11434");
+  });
+
+  it("allows https intake and records-admin URLs from env instead of localhost", async () => {
+    const loaded = loadWorkerConfig({
+      ...baseEnv,
+      INTAKE_API_URL: "https://intake.example.duckdns.org",
+      RECORDS_ADMIN_URL: "https://records.example.duckdns.org",
+      INTAKE_BASIC_AUTH_USER: "tester",
+      INTAKE_BASIC_AUTH_PASS: "shared-pass",
+      RECORDS_ADMIN_BASIC_AUTH_USER: "tester",
+      RECORDS_ADMIN_BASIC_AUTH_PASS: "shared-pass",
+    });
+    expect(loaded.intakeApiUrl).toBe("https://intake.example.duckdns.org");
+    expect(loaded.recordsAdminUrl).toBe("https://records.example.duckdns.org");
+    expect(loaded.intakeBasicAuth).toEqual({ user: "tester", password: "shared-pass" });
+    expect(loaded.recordsAdminBasicAuth).toEqual({ user: "tester", password: "shared-pass" });
+    expect(workerAllowedBaseUrls(loaded)).toEqual([
+      "https://intake.example.duckdns.org",
+      "https://records.example.duckdns.org",
+      "http://127.0.0.1:11434",
+    ]);
+    const inner = vi.fn<AllowedFetch>(async () => new Response("ok"));
+    const allowed = createAllowedFetch({
+      allowedBaseUrls: workerAllowedBaseUrls(loaded),
+      fetchImpl: inner,
+    });
+    await expect(allowed("http://127.0.0.1:3001/api/health")).rejects.toThrow(/Blocked request/);
+    await expect(allowed("https://intake.example.duckdns.org/api/health")).resolves.toBeTruthy();
+    expect(() => loadWorkerConfig({ ...baseEnv, INTAKE_BASIC_AUTH_USER: "tester" })).toThrow(
+      /INTAKE_BASIC_AUTH_USER and INTAKE_BASIC_AUTH_PASS/,
+    );
+  });
+
+  it("sends Caddy basic auth as Authorization and keeps the worker Bearer token", async () => {
+    const world = fakeWorld({});
+    const cycle = await runOnce({
+      config: {
+        ...config,
+        intakeBasicAuth: { user: "tester", password: "shared-pass" },
+      },
+      fetchImpl: world.fetchImpl,
+    });
+    expect(cycle.kind).toBe("reported");
+    const saved = world.calls.find((call) => call.url.endsWith("/api/worker/entry-requests"));
+    expect(saved?.authorization).toBe(encodeBasicAuth("tester", "shared-pass"));
+    expect(saved?.workerAuthorization).toBe("Bearer intake-token");
   });
 
   it("reads the entry id and artist id from the records-admin entry URL", () => {
