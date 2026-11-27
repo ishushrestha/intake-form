@@ -156,15 +156,6 @@ POLL_SECONDS=5
 
 Paste the same token into `INTAKE_WORKER_TOKEN`. Leave `RECORDS_ADMIN_USER` and `RECORDS_ADMIN_PASSWORD` as the records-admin local login, or change them to match that app. Optional: add `HEADED=true` to show the browser while Playwright types.
 
-When Caddy `basic_auth` sits in front of the public https sites, also set the optional tester login. The worker sends it as `Authorization` on fetch to intake, and as Playwright `httpCredentials` for records-admin:
-
-```ini
-INTAKE_BASIC_AUTH_USER=tester
-INTAKE_BASIC_AUTH_PASS=
-RECORDS_ADMIN_BASIC_AUTH_USER=tester
-RECORDS_ADMIN_BASIC_AUTH_PASS=
-```
-
 Install the browser used by the worker:
 
 ```cmd
@@ -257,22 +248,16 @@ Log out of SSH and log back in so the `docker` group applies. Check:
 docker compose version
 ```
 
-4. Clone both repos side by side in your home directory. records-admin must be a sibling of intake-form (compose builds it from `../../records-admin`).
-
-Until both PRs are merged, check out the Docker branches. `main` does not have `deploy/` in intake-form (or the records-admin Dockerfile) yet.
+4. Clone both repos side by side in your home directory. records-admin must be a sibling of intake-form (compose builds it from `../../records-admin`). Both repos stay on `main`.
 
 ```bash
 cd ~
 git clone https://github.com/ishushrestha/intake-form.git
 git clone https://github.com/ishushrestha/records-admin.git
 cd ~/intake-form
-git checkout cursor/vps-https-hardening-2c71
-cd ~/records-admin
-git checkout cursor/vps-https-caddy-4b05
-cd ~/intake-form
 ```
 
-Once both PRs are merged, leave both repos on `main` and skip the `git checkout` lines. Compose builds records-admin from `~/records-admin`. The records-admin image stores SQLite and uploads under `/data`.
+Compose builds records-admin from `~/records-admin`. The records-admin image stores SQLite and uploads under `/data`.
 
 5. Create `deploy/.env`. Secrets never go in git.
 
@@ -321,10 +306,26 @@ Intake is https://artist-lab.southindia.cloudapp.azure.com (the form is public f
 
 10. Update the VM.
 
-This Caddy change does not need an image rebuild. If `deploy/.env` still has `BASIC_AUTH_USER` or `BASIC_AUTH_HASH`, you can delete those lines. Leaving them is harmless; Caddy no longer reads them.
+This Caddy change does not need an image rebuild. If `deploy/.env` still has `BASIC_AUTH_USER` or `BASIC_AUTH_HASH`, you can delete those lines. Leaving them is harmless; Caddy no longer reads them. `git checkout main` is safe to run again if you are already on `main`.
+
+```bash
+cd ~/records-admin
+```
+
+```bash
+git checkout main
+```
+
+```bash
+git pull
+```
 
 ```bash
 cd ~/intake-form
+```
+
+```bash
+git checkout main
 ```
 
 ```bash
@@ -342,8 +343,8 @@ docker compose up -d --force-recreate caddy
 For later app or worker image updates, pull both repos and rebuild:
 
 ```bash
-cd ~/intake-form && git pull
-cd ~/records-admin && git pull
+cd ~/records-admin && git checkout main && git pull
+cd ~/intake-form && git checkout main && git pull
 cd ~/intake-form/deploy
 docker compose build intake
 docker compose build records-admin
