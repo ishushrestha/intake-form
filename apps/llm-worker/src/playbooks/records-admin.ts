@@ -149,6 +149,7 @@ async function createEntry(page: Page, proposed: ProposedRecordsEntry): Promise<
 export function createRecordsAdminPlaybook(options: {
   readonly headed: boolean;
   readonly allowedHosts: AllowedHostSet;
+  readonly httpCredentials?: { readonly username: string; readonly password: string };
 }): RecordsAdminPlaybook {
   return {
     submitEntry: async (target, proposed, screenshotPath) => {
@@ -156,7 +157,10 @@ export function createRecordsAdminPlaybook(options: {
       const browser = await chromium.launch({ headless: !options.headed });
       let page: Page | undefined;
       try {
-        const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+        const context = await browser.newContext({
+          viewport: { width: 1280, height: 900 },
+          httpCredentials: options.httpCredentials,
+        });
         await applyHostAllowlist(context, options.allowedHosts);
         page = await context.newPage();
         await page.goto(`${origin}/login`, { waitUntil: "networkidle" });

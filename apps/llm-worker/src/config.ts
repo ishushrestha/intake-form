@@ -1,9 +1,16 @@
+export interface BasicAuth {
+  readonly user: string;
+  readonly password: string;
+}
+
 export interface WorkerConfig {
   readonly intakeApiUrl: string;
   readonly intakeWorkerToken: string;
+  readonly intakeBasicAuth?: BasicAuth;
   readonly recordsAdminUrl: string;
   readonly recordsAdminUser: string;
   readonly recordsAdminPassword: string;
+  readonly recordsAdminBasicAuth?: BasicAuth;
   readonly ollamaUrl: string;
   readonly ollamaModel: string;
   readonly pollSeconds: number;
@@ -55,6 +62,20 @@ function requiredSecret(env: NodeJS.ProcessEnv, key: string): string {
   return value;
 }
 
+function optionalBasicAuth(env: NodeJS.ProcessEnv, userKey: string, passwordKey: string): BasicAuth | undefined {
+  const user = env[userKey]?.trim();
+  const password = env[passwordKey]?.trim();
+  const hasUser = user !== undefined && user.length > 0;
+  const hasPassword = password !== undefined && password.length > 0;
+  if (!hasUser && !hasPassword) {
+    return undefined;
+  }
+  if (!hasUser || !hasPassword || user === undefined || password === undefined) {
+    throw new Error(`${userKey} and ${passwordKey} must both be set.`);
+  }
+  return { user, password };
+}
+
 function pollSeconds(raw: string | undefined): number {
   if (raw === undefined || raw.trim().length === 0) {
     return 5;
@@ -78,9 +99,15 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerCo
   return {
     intakeApiUrl: requiredUrl(env, "INTAKE_API_URL"),
     intakeWorkerToken: requiredSecret(env, "INTAKE_WORKER_TOKEN"),
+    intakeBasicAuth: optionalBasicAuth(env, "INTAKE_BASIC_AUTH_USER", "INTAKE_BASIC_AUTH_PASS"),
     recordsAdminUrl: requiredUrl(env, "RECORDS_ADMIN_URL", "http://localhost:5174"),
     recordsAdminUser: requiredSecret(env, "RECORDS_ADMIN_USER"),
     recordsAdminPassword: requiredSecret(env, "RECORDS_ADMIN_PASSWORD"),
+    recordsAdminBasicAuth: optionalBasicAuth(
+      env,
+      "RECORDS_ADMIN_BASIC_AUTH_USER",
+      "RECORDS_ADMIN_BASIC_AUTH_PASS",
+    ),
     ollamaUrl: ollama,
     ollamaModel: model === undefined || model.length === 0 ? "qwen2.5:3b" : model,
     pollSeconds: pollSeconds(env.POLL_SECONDS),

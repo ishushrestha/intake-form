@@ -11,7 +11,7 @@ const PNG = Buffer.from(
 
 const PASSWORD = "correct-horse";
 
-function createApp(directory: string) {
+function createApp(directory: string, options: { readonly secureCookies?: boolean } = {}) {
   return makeHandler({
     port: 0,
     databaseUrl: `file:${join(directory, "intake.db")}`,
@@ -21,6 +21,7 @@ function createApp(directory: string) {
     sessionSecret: "test-session-secret",
     workerToken: "worker-test-token",
     processingStaleMs: 10 * 60 * 1000,
+    secureCookies: options.secureCookies,
   });
 }
 
@@ -84,11 +85,31 @@ describe("admin login", () => {
     const setCookie = response.headers.get("set-cookie") ?? "";
     expect(setCookie).toMatch(/HttpOnly/i);
     expect(setCookie).toMatch(/SameSite=Lax/i);
+    expect(setCookie).not.toMatch(/Secure/i);
     expect(setCookie).not.toContain(PASSWORD);
     const session = await app.handler(
       new Request("http://localhost/api/admin/session", { headers: { cookie: cookieOf(response) } }),
     );
     expect(session.status).toBe(200);
+  });
+
+  it("sets Secure on the session cookie when secureCookies is enabled", async () => {
+    const securedDirectory = mkdtempSync(join(tmpdir(), "intake-admin-secure-"));
+    const secured = createApp(securedDirectory, { secureCookies: true });
+    const response = await secured.handler(
+      new Request("http://localhost/api/admin/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password: PASSWORD }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const setCookie = response.headers.get("set-cookie") ?? "";
+    expect(setCookie).toMatch(/HttpOnly/i);
+    expect(setCookie).toMatch(/Secure/i);
+    expect(setCookie).toMatch(/SameSite=Lax/i);
+    await secured.dispose();
+    rmSync(securedDirectory, { recursive: true, force: true });
   });
 });
 

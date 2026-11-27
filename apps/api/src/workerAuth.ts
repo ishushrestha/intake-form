@@ -9,6 +9,14 @@ export function bearerToken(header: string | undefined): string | undefined {
   return token === undefined || token.length === 0 ? undefined : token;
 }
 
+/** Bearer token from Authorization, or X-Worker-Authorization when Caddy basic_auth occupies Authorization. */
+export function workerBearerToken(
+  authorization: string | undefined,
+  forwardedAuthorization?: string,
+): string | undefined {
+  return bearerToken(authorization) ?? bearerToken(forwardedAuthorization);
+}
+
 /** Compare tokens without leaking the expected value through an early length check. */
 export function tokenMatches(provided: string, expected: string): boolean {
   const providedHash = createHash("sha256").update(provided).digest();
