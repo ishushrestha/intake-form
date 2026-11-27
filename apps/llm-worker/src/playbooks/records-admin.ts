@@ -1,4 +1,4 @@
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { assertAllowedUrl, type AllowedHostSet } from "../allowlist.js";
 
 export interface RecordsAdminTarget {
@@ -154,9 +154,13 @@ export function createRecordsAdminPlaybook(options: {
   return {
     submitEntry: async (target, proposed, screenshotPath) => {
       const origin = assertAllowedUrl(target.baseUrl, options.allowedHosts).origin;
-      const browser = await chromium.launch({ headless: !options.headed });
+      let browser: Browser | undefined;
       let page: Page | undefined;
       try {
+        browser = await chromium.launch({
+          headless: !options.headed,
+          args: process.env.RUNNING_IN_DOCKER === "1" ? ["--disable-dev-shm-usage", "--no-sandbox"] : [],
+        });
         const context = await browser.newContext({
           viewport: { width: 1280, height: 900 },
           httpCredentials: options.httpCredentials,
@@ -173,7 +177,9 @@ export function createRecordsAdminPlaybook(options: {
         await screenshotBestEffort(page, screenshotPath);
         throw error;
       } finally {
-        await browser.close();
+        if (browser !== undefined) {
+          await browser.close();
+        }
       }
     },
   };

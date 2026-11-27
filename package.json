@@ -17,6 +17,9 @@
     "check-version": "node scripts/check-version.mjs",
     "worker": "pnpm --filter @intake/llm-worker start"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "eslint": "^9.39.2",

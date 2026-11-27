@@ -278,6 +278,26 @@ describe("local worker", () => {
     expect(() => loadWorkerConfig({ ...baseEnv, RECORDS_WORKER_TOKEN: "leftover" })).not.toThrow();
   });
 
+  it("allows Docker Compose service hostnames from env without extra keys", () => {
+    const loaded = loadWorkerConfig({
+      ...baseEnv,
+      INTAKE_API_URL: "http://intake:3001",
+      RECORDS_ADMIN_URL: "http://records-admin:3002",
+      OLLAMA_URL: "http://ollama:11434",
+    });
+    expect(loaded.intakeApiUrl).toBe("http://intake:3001");
+    expect(loaded.recordsAdminUrl).toBe("http://records-admin:3002");
+    expect(loaded.ollamaUrl).toBe("http://ollama:11434");
+    expect(loaded.intakeBasicAuth).toBeUndefined();
+    expect(loaded.recordsAdminBasicAuth).toBeUndefined();
+    expect(workerAllowedBaseUrls(loaded)).toEqual([
+      "http://intake:3001",
+      "http://records-admin:3002",
+      "http://ollama:11434",
+    ]);
+    expect(loadWorkerConfig(baseEnv).ollamaUrl).toBe("http://127.0.0.1:11434");
+  });
+
   it("allows https intake and records-admin URLs from env instead of localhost", async () => {
     const loaded = loadWorkerConfig({
       ...baseEnv,

@@ -1,0 +1,16 @@
+**/node_modules
+**/dist
+**/coverage
+**/.env
+**/.env.local
+**/data
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+**/*.tsbuildinfo
+.git
+.github
+deploy
+**/.DS_Store
+vite.config.ts.timestamp-*

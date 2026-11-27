@@ -1,0 +1,101 @@
+name: artist-lab
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    mem_limit: 64m
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8443:8443"
+    environment:
+      DOMAIN: ${DOMAIN:-artist-lab.southindia.cloudapp.azure.com}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-tester}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - intake
+      - records-admin
+
+  intake:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3001"
+      WEB_DIST: /web
+      DATABASE_URL: file:./data/intake.db
+      UPLOAD_DIR: ./data/uploads
+      WEB_ORIGIN: https://${DOMAIN:-artist-lab.southindia.cloudapp.azure.com}
+      ALLOWED_ORIGINS: https://${DOMAIN:-artist-lab.southindia.cloudapp.azure.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET}
+      WORKER_TOKEN: ${WORKER_TOKEN}
+    volumes:
+      - intake_data:/app/data
+
+  records-admin:
+    build:
+      context: ../../records-admin
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      HOST: 0.0.0.0
+      ALLOWED_ORIGINS: https://${DOMAIN:-artist-lab.southindia.cloudapp.azure.com}:8443
+      TRUST_PROXY: 172.16.0.0/12,10.0.0.0/8,192.168.0.0/16
+      ADMIN_USERNAME: ${RECORDS_ADMIN_USER}
+      ADMIN_PASSWORD: ${RECORDS_ADMIN_PASSWORD}
+      SESSION_SECRET: ${RECORDS_ADMIN_SESSION_SECRET}
+    volumes:
+      - records_data:/data
+
+  worker:
+    build:
+      context: ..
+      dockerfile: apps/llm-worker/Dockerfile
+    restart: unless-stopped
+    init: true
+    mem_limit: 768m
+    shm_size: 256mb
+    environment:
+      RUNNING_IN_DOCKER: "1"
+      INTAKE_API_URL: http://intake:3001
+      INTAKE_WORKER_TOKEN: ${WORKER_TOKEN}
+      RECORDS_ADMIN_URL: http://records-admin:3002
+      RECORDS_ADMIN_USER: ${RECORDS_ADMIN_USER}
+      RECORDS_ADMIN_PASSWORD: ${RECORDS_ADMIN_PASSWORD}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: qwen2.5:3b
+      POLL_SECONDS: "5"
+    depends_on:
+      - intake
+      - records-admin
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    mem_limit: 2560m
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_KEEP_ALIVE: 5m
+    volumes:
+      - ollama_data:/root/.ollama
+
+volumes:
+  caddy_data:
+  caddy_config:
+  intake_data:
+  records_data:
+  ollama_data:

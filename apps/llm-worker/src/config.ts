@@ -32,6 +32,15 @@ export function isLoopbackHostname(hostname: string): boolean {
   return parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
+/** Loopback, or a Docker Compose service name such as `ollama`. */
+export function isAllowedOllamaHostname(hostname: string): boolean {
+  if (isLoopbackHostname(hostname)) {
+    return true;
+  }
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(host);
+}
+
 function requiredUrl(env: NodeJS.ProcessEnv, key: string, fallback?: string): string {
   const raw = env[key]?.trim() || fallback;
   if (raw === undefined || raw.length === 0) {
@@ -90,9 +99,9 @@ function pollSeconds(raw: string | undefined): number {
 export function loadWorkerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   const ollama = requiredUrl(env, "OLLAMA_URL");
   const ollamaHost = new URL(ollama).hostname;
-  if (!isLoopbackHostname(ollamaHost)) {
+  if (!isAllowedOllamaHostname(ollamaHost)) {
     throw new Error(
-      `OLLAMA_URL must be a loopback address so the model stays on this PC. Refusing ${ollamaHost}. Set OLLAMA_HOST=127.0.0.1 before starting Ollama.`,
+      `OLLAMA_URL must be a loopback address (or a Docker Compose service name such as ollama) so the model stays on this machine. Refusing ${ollamaHost}.`,
     );
   }
   const model = env.OLLAMA_MODEL?.trim();

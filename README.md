@@ -2,7 +2,7 @@
 
 Version 0.5.0
 
-Public intake form for record submissions, plus a password-protected admin desk in the same app and database. Someone fills in a name, address, image, and the record ID from a separate records system. This service stores the submission as `pending` in its own SQLite database and keeps the image on disk. An administrator can verify or reject it. A verified submission can be queued for the record manager. A local worker on the reviewer's Windows PC checks the fields with Ollama and saves a pending LLM entry request. An administrator reviews those requests, then Verify uses Playwright to type them into the records-admin web UI. Reject never opens records-admin.
+Public intake form for record submissions, plus a password-protected admin desk in the same app and database. Someone fills in a name, address, image, and the record ID from a separate records system. This service stores the submission as `pending` in its own SQLite database and keeps the image on disk. An administrator can verify or reject it. A verified submission can be queued for the record manager. A worker checks the fields with Ollama and saves a pending LLM entry request. An administrator reviews those requests, then Verify uses Playwright to type them into the records-admin web UI. Reject never opens records-admin. Local development still runs that worker on the Windows PC. Production on Azure runs it in Docker next to the apps.
 
 The API is an [Effect](https://effect.website) HTTP service on Node, which is the house default for this stack. Uploaded files are parsed with Effect's multipart support, checked again on the server, and written under a configurable directory.
 
@@ -34,7 +34,7 @@ pnpm build
 pnpm start
 ```
 
-That process listens on `HOST`:`PORT` (default `127.0.0.1:3001`). Put Caddy in front of it for HTTPS.
+That process listens on `HOST`:`PORT` (default `127.0.0.1:3001`). On Azure, Caddy in Docker is in front of it for HTTPS.
 
 Other root scripts:
 
@@ -55,11 +55,11 @@ Copy `.env.example` to `.env` at the repo root. The API reads that file when it 
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | Listen address for the API (and for `pnpm dev` / `pnpm preview`) |
 | `PORT` | `3001` | API port. In production this process also serves the web UI |
-| `NODE_ENV` | unset | `production` requires a strong `ADMIN_PASSWORD`, Secure cookies, trusted loopback proxy headers, and the web build |
+| `NODE_ENV` | unset | `production` requires a strong `ADMIN_PASSWORD`, Secure cookies, trusted proxy headers (loopback and private Docker networks), and the web build |
 | `DATABASE_URL` | `file:./data/intake.db` | libsql/Turso-compatible SQLite URL |
 | `UPLOAD_DIR` | `./data/uploads` | Directory for stored images |
 | `WEB_DIST` | `../web/dist` in production | Directory of the Vite build served by `pnpm start` |
-| `WEB_ORIGIN` | `http://localhost:5173` | Browser origin allowed to call the API directly. Comma-separated list is allowed; use the public https origin on a VPS |
+| `WEB_ORIGIN` | `http://localhost:5173` | Browser origin allowed to call the API directly. Comma-separated list is allowed; use the public https origin in production |
 | `ALLOWED_ORIGINS` | unset | Optional CORS list. When set, this replaces `WEB_ORIGIN` for allowed origins |
 | `ADMIN_PASSWORD` | unset | Shared admin password. Login stays closed until this is set. In production it must be at least 12 characters and must not be `change-me` |
 | `SESSION_SECRET` | random at startup | HMAC key for the admin session cookie |
@@ -67,7 +67,7 @@ Copy `.env.example` to `.env` at the repo root. The API reads that file when it 
 
 With the defaults, the database file is `apps/api/data/intake.db` and images are `apps/api/data/uploads`. Screenshots from Verify are `apps/api/data/screenshots`. Those directories are created on startup and are gitignored.
 
-The admin password is hashed in memory with scrypt when the API starts and compared in constant time. It is not written to the database. A successful login sets an httpOnly session cookie that expires after eight hours (`SameSite=Lax`; `Secure` when `NODE_ENV=production`). Repeated failed attempts are rate limited. In production the API also trusts `X-Forwarded-*` headers from loopback (Caddy on the same machine).
+The admin password is hashed in memory with scrypt when the API starts and compared in constant time. It is not written to the database. A successful login sets an httpOnly session cookie that expires after eight hours (`SameSite=Lax`; `Secure` when `NODE_ENV=production`). Repeated failed attempts are rate limited. In production the API also trusts `X-Forwarded-*` headers from loopback and private Docker networks (Caddy in front of the app). Azure production secrets live in `deploy/.env` (copy `deploy/.env.example`); they are not required for local `pnpm dev`.
 
 ## HTTP API
 
@@ -103,7 +103,7 @@ Images must be JPEG, PNG, or WebP, at most 5 MB. The server checks the file byte
 
 ## Local worker (Windows)
 
-The worker runs only on the Windows PC with the NVIDIA GPU (under 8 GB of VRAM; `qwen2.5:3b` is the default model). It does not open a port. It only calls the hosts in `INTAKE_API_URL`, `RECORDS_ADMIN_URL`, and `OLLAMA_URL` (https intake and records-admin URLs are allowed). Any other host is refused. If `OLLAMA_URL` is not a loopback address, the worker exits instead of starting.
+The worker for local development runs only on the Windows PC with the NVIDIA GPU (under 8 GB of VRAM; `qwen2.5:3b` is the default model). It does not open a port. It only calls the hosts in `INTAKE_API_URL`, `RECORDS_ADMIN_URL`, and `OLLAMA_URL` (https intake and records-admin URLs are allowed). Any other host is refused. If `OLLAMA_URL` is not a loopback address (or a Docker Compose service name such as `ollama`), the worker exits instead of starting. Existing local `.env` files keep working: leave `OLLAMA_URL=http://127.0.0.1:11434`.
 
 Ollama itself must listen on loopback. In cmd:
 
@@ -199,170 +199,154 @@ Open **LLM entry requests**. Verify and Reject are available while the request i
 
 Playwright network requests are limited to the same allowlist as the worker HTTP client: intake, Ollama, and the records-admin web origin.
 
-## Run on a VPS (Ubuntu)
+## Deploy on the Azure VM (Docker)
 
-Do these steps one at a time. From Windows Command Prompt, SSH into the VPS, then run the Ubuntu commands there. Replace `USER`, the VPS IP, and the DuckDNS names with yours.
+Everything runs on one Ubuntu VM in Docker Compose: intake, records-admin, the worker, Ollama, and Caddy. Only Caddy publishes ports (80, 443, 8443). Local `pnpm dev` / `pnpm worker` on the Windows PC is unchanged.
 
-1. SSH in from Windows cmd:
+Do these steps one at a time. The SSH private key never goes in the repo or in chat.
+
+1. From Windows Command Prompt, SSH in (replace the key path if yours is different):
 
 ```cmd
-ssh USER@YOUR.VPS.IP
+ssh -i C:\path\to\key.pem azureuser@artist-lab.southindia.cloudapp.azure.com
 ```
 
-2. Allow only SSH and HTTPS through the firewall:
+If Windows says the key permissions are too open:
 
-```bash
-sudo ufw allow 22/tcp
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw enable
-sudo ufw status
+```cmd
+icacls C:\path\to\key.pem /inheritance:r
+icacls C:\path\to\key.pem /grant:r %USERNAME%:R
 ```
 
-3. Install Node.js LTS and pnpm (corepack):
+Then run the `ssh` command again.
+
+2. On the VM, add 4 GB of swap if it is missing:
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-sudo corepack enable
-corepack prepare pnpm@10 --activate
-node -v
-pnpm -v
+free -h
 ```
 
-4. Clone this repo, install, and build:
+If there is no swap, run:
 
 ```bash
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+free -h
+```
+
+3. Install Docker Engine and the Compose plugin:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME}") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+sudo usermod -aG docker azureuser
+```
+
+Log out of SSH and log back in so the `docker` group applies. Check:
+
+```bash
+docker compose version
+```
+
+4. Clone both repos side by side in your home directory. records-admin must be a sibling of intake-form (compose builds it from `../../records-admin`).
+
+```bash
+cd ~
 git clone https://github.com/ishushrestha/intake-form.git
-cd intake-form
-pnpm install
-pnpm build
+git clone https://github.com/ishushrestha/records-admin.git
+cd ~/records-admin
+git checkout cursor/vps-https-caddy-4b05
+cd ~/intake-form
 ```
 
-5. Create `.env` with fresh tokens and strong passwords. Secrets never go in git.
+Compose builds records-admin from `~/records-admin` (its Dockerfile is on `cursor/vps-https-caddy-4b05`). The image stores SQLite and uploads under `/data`.
+
+5. Create `deploy/.env`. Secrets never go in git.
 
 ```bash
-cp .env.example .env
-nano .env
+cd ~/intake-form
+cp deploy/.env.example deploy/.env
+nano deploy/.env
 ```
 
-Set at least:
-
-```ini
-NODE_ENV=production
-HOST=127.0.0.1
-PORT=3001
-WEB_ORIGIN=https://YOUR-INTAKE.duckdns.org
-ADMIN_PASSWORD=
-SESSION_SECRET=
-WORKER_TOKEN=
-```
-
-Generate values on the VPS:
+Generate values:
 
 ```bash
 openssl rand -base64 24
 ```
 
-Run that a few times. Use one result for `ADMIN_PASSWORD` (12+ characters, not `change-me`), one for `SESSION_SECRET`, and one for `WORKER_TOKEN`. Copy `WORKER_TOKEN` to the worker `.env` on the Windows PC as `INTAKE_WORKER_TOKEN`.
+Run that several times. Put one result in `ADMIN_PASSWORD` (12+ characters, not `change-me`), one in `SESSION_SECRET`, one in `WORKER_TOKEN`, one in `RECORDS_ADMIN_PASSWORD` (12+ characters, not `change-me`), and one in `RECORDS_ADMIN_SESSION_SECRET`. Set `RECORDS_ADMIN_USER` to something other than `admin`.
 
-6. Run the production process (builds the web UI and serves it with the API from one Node process):
-
-```bash
-pnpm build
-pnpm start
-```
-
-Leave this until systemd is in place. Check http://127.0.0.1:3001/api/health on the VPS. It must not be reachable from the internet on port 3001.
-
-7. Install a systemd service so it starts on boot. Create `/etc/systemd/system/intake.service` (adjust `User` and paths):
-
-```ini
-[Unit]
-Description=intake-form
-After=network.target
-
-[Service]
-Type=simple
-User=USER
-WorkingDirectory=/home/USER/intake-form
-Environment=NODE_ENV=production
-EnvironmentFile=/home/USER/intake-form/.env
-Environment=PATH=/usr/bin:/usr/local/bin
-ExecStart=/usr/bin/pnpm start
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then:
+Create the shared tester password hash:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now intake
-sudo systemctl status intake
+docker run --rm caddy:2-alpine caddy hash-password
 ```
 
-8. DuckDNS: in a browser, create two free subdomains that point at the VPS public IP, for example `YOUR-INTAKE.duckdns.org` (this app) and `YOUR-RECORDS.duckdns.org` (records-admin). Wait until they resolve.
+Paste the printed hash into `BASIC_AUTH_HASH`. Leave `BASIC_AUTH_USER=tester` unless you want a different tester name. Leave `DOMAIN=artist-lab.southindia.cloudapp.azure.com` unless DevOps has remapped DNS.
 
-9. Install Caddy and put it in front of both sites with automatic HTTPS and one shared tester login.
+6. Build images **one at a time** so the 4 GB VM does not run out of memory. From `~/intake-form/deploy`:
 
 ```bash
-sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-sudo apt update
-sudo apt install caddy
-caddy hash-password
+cd ~/intake-form/deploy
+docker compose build intake
+docker compose build records-admin
+docker compose build worker
 ```
 
-`caddy hash-password` asks for the tester password and prints a hash. Put that hash in the Caddyfile below. Edit `/etc/caddy/Caddyfile`:
-
-```caddy
-YOUR-INTAKE.duckdns.org {
-	basic_auth {
-		tester "$2a$14$REPLACE_WITH_CADDY_HASH"
-	}
-	reverse_proxy 127.0.0.1:3001
-}
-
-YOUR-RECORDS.duckdns.org {
-	basic_auth {
-		tester "$2a$14$REPLACE_WITH_CADDY_HASH"
-	}
-	reverse_proxy 127.0.0.1:3002
-}
-```
-
-Use the records-admin production port if it is not `3002`. Reload Caddy:
+7. Start the stack, then pull the Ollama model (this is large; wait for it to finish):
 
 ```bash
-sudo systemctl reload caddy
+docker compose up -d
+docker compose exec ollama ollama pull qwen2.5:3b
 ```
 
-Open `https://YOUR-INTAKE.duckdns.org` in a browser. The browser asks for the tester login, then the intake form. Admin is `/admin`.
+8. Check that containers are up:
 
-10. On the Windows PC, point the worker at the https URLs. In `apps\llm-worker\.env`:
-
-```ini
-INTAKE_API_URL=https://YOUR-INTAKE.duckdns.org
-INTAKE_WORKER_TOKEN=
-INTAKE_BASIC_AUTH_USER=tester
-INTAKE_BASIC_AUTH_PASS=
-RECORDS_ADMIN_URL=https://YOUR-RECORDS.duckdns.org
-RECORDS_ADMIN_USER=admin
-RECORDS_ADMIN_PASSWORD=
-RECORDS_ADMIN_BASIC_AUTH_USER=tester
-RECORDS_ADMIN_BASIC_AUTH_PASS=
-OLLAMA_URL=http://127.0.0.1:11434
+```bash
+docker compose ps
+docker compose logs --tail=50
 ```
 
-`INTAKE_BASIC_AUTH_*` and `RECORDS_ADMIN_BASIC_AUTH_*` are the shared Caddy tester login. `RECORDS_ADMIN_USER` and `RECORDS_ADMIN_PASSWORD` stay the records-admin app login. Keep Ollama on loopback on this PC. Then `pnpm worker` as before.
+Intake is https://artist-lab.southindia.cloudapp.azure.com (browser asks for the tester login, then the form; admin is `/admin`). records-admin is https://artist-lab.southindia.cloudapp.azure.com:8443.
+
+9. Ports DevOps must open: **80**, **443**, and **8443** from the internet. **22** only from your IP (or a bastion). Do not open 3001, 3002, or 11434.
+
+10. Update later:
+
+```bash
+cd ~/intake-form && git pull
+cd ~/records-admin && git pull
+cd ~/intake-form/deploy
+docker compose build intake
+docker compose build records-admin
+docker compose build worker
+docker compose up -d
+```
+
+If DevOps remaps the DNS name, change `DOMAIN` in `deploy/.env` and run `docker compose up -d` again. Caddy will request a new certificate.
+
+11. Stop:
+
+```bash
+cd ~/intake-form/deploy
+docker compose down
+```
+
+Volumes keep the SQLite databases, uploads, Ollama models, and Caddy certificates. `docker compose down -v` deletes that data.
 
 ## Version history
 
-- 0.5.0 — Bind localhost by default, require a strong production admin password, Secure cookies and CORS for HTTPS, serve web+API with `pnpm start`, and document a VPS + Caddy setup.
+- 0.5.0 — Bind localhost by default, require a strong production admin password, Secure cookies and CORS for HTTPS, serve web+API with `pnpm start`, and deploy on Azure with Docker Compose + Caddy.
 - 0.4.0 — LLM maps queued submissions into pending entry requests. An admin verifies them in the records-admin web UI through Playwright, or rejects them.
 - 0.3.0 — Queue verified submissions and send them to records-admin through a local Ollama worker.
 - 0.2.3 — Add a visible Back to submissions button on the admin detail page.
