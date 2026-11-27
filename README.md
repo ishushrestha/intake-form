@@ -1,6 +1,6 @@
 # Intake
 
-Version 0.5.0
+Version 0.5.1
 
 Public intake form for record submissions, plus a password-protected admin desk in the same app and database. Someone fills in a name, address, image, and the record ID from a separate records system. This service stores the submission as `pending` in its own SQLite database and keeps the image on disk. An administrator can verify or reject it. A verified submission can be queued for the record manager. A worker checks the fields with Ollama and saves a pending LLM entry request. An administrator reviews those requests, then Verify uses Playwright to type them into the records-admin web UI. Reject never opens records-admin. Local development still runs that worker on the Windows PC. Production on Azure runs it in Docker next to the apps.
 
@@ -156,15 +156,6 @@ POLL_SECONDS=5
 
 Paste the same token into `INTAKE_WORKER_TOKEN`. Leave `RECORDS_ADMIN_USER` and `RECORDS_ADMIN_PASSWORD` as the records-admin local login, or change them to match that app. Optional: add `HEADED=true` to show the browser while Playwright types.
 
-When Caddy `basic_auth` sits in front of the public https sites, also set the optional tester login. The worker sends it as `Authorization` on fetch to intake, and as Playwright `httpCredentials` for records-admin:
-
-```ini
-INTAKE_BASIC_AUTH_USER=tester
-INTAKE_BASIC_AUTH_PASS=
-RECORDS_ADMIN_BASIC_AUTH_USER=tester
-RECORDS_ADMIN_BASIC_AUTH_PASS=
-```
-
 Install the browser used by the worker:
 
 ```cmd
@@ -257,22 +248,16 @@ Log out of SSH and log back in so the `docker` group applies. Check:
 docker compose version
 ```
 
-4. Clone both repos side by side in your home directory. records-admin must be a sibling of intake-form (compose builds it from `../../records-admin`).
-
-Until both PRs are merged, check out the Docker branches. `main` does not have `deploy/` in intake-form (or the records-admin Dockerfile) yet.
+4. Clone both repos side by side in your home directory. records-admin must be a sibling of intake-form (compose builds it from `../../records-admin`). Both repos stay on `main`.
 
 ```bash
 cd ~
 git clone https://github.com/ishushrestha/intake-form.git
 git clone https://github.com/ishushrestha/records-admin.git
 cd ~/intake-form
-git checkout cursor/vps-https-hardening-2c71
-cd ~/records-admin
-git checkout cursor/vps-https-caddy-4b05
-cd ~/intake-form
 ```
 
-Once both PRs are merged, leave both repos on `main` and skip the `git checkout` lines. Compose builds records-admin from `~/records-admin`. The records-admin image stores SQLite and uploads under `/data`.
+Compose builds records-admin from `~/records-admin`. The records-admin image stores SQLite and uploads under `/data`.
 
 5. Create `deploy/.env`. Secrets never go in git.
 
@@ -290,13 +275,7 @@ openssl rand -base64 24
 
 Run that several times. Put one result in `ADMIN_PASSWORD` (12+ characters, not `change-me`), one in `SESSION_SECRET`, one in `WORKER_TOKEN`, one in `RECORDS_ADMIN_PASSWORD` (12+ characters, not `change-me`), and one in `RECORDS_ADMIN_SESSION_SECRET`. Set `RECORDS_ADMIN_USER` to something other than `admin`.
 
-Create the shared tester password hash:
-
-```bash
-docker run --rm caddy:2-alpine caddy hash-password
-```
-
-Paste the printed hash into `BASIC_AUTH_HASH`. Leave `BASIC_AUTH_USER=tester` unless you want a different tester name. Leave `DOMAIN=artist-lab.southindia.cloudapp.azure.com` unless DevOps has remapped DNS.
+Leave `DOMAIN=artist-lab.southindia.cloudapp.azure.com` unless DevOps has remapped DNS.
 
 6. Build images **one at a time** so the 4 GB VM does not run out of memory. From `~/intake-form/deploy`:
 
@@ -321,15 +300,51 @@ docker compose ps
 docker compose logs --tail=50
 ```
 
-Intake is https://artist-lab.southindia.cloudapp.azure.com (browser asks for the tester login, then the form; admin is `/admin`). records-admin is https://artist-lab.southindia.cloudapp.azure.com:8443.
+Intake is https://artist-lab.southindia.cloudapp.azure.com (the form is public for the test period; `/admin` still uses `ADMIN_PASSWORD`). records-admin is https://artist-lab.southindia.cloudapp.azure.com:8443 (its own app login).
 
 9. Ports DevOps must open: **80**, **443**, and **8443** from the internet. **22** only from your IP (or a bastion). Do not open 3001, 3002, or 11434.
 
-10. Update later:
+10. Update the VM.
+
+This Caddy change does not need an image rebuild. If `deploy/.env` still has `BASIC_AUTH_USER` or `BASIC_AUTH_HASH`, you can delete those lines. Leaving them is harmless; Caddy no longer reads them. `git checkout main` is safe to run again if you are already on `main`.
 
 ```bash
-cd ~/intake-form && git pull
-cd ~/records-admin && git pull
+cd ~/records-admin
+```
+
+```bash
+git checkout main
+```
+
+```bash
+git pull
+```
+
+```bash
+cd ~/intake-form
+```
+
+```bash
+git checkout main
+```
+
+```bash
+git pull
+```
+
+```bash
+cd deploy
+```
+
+```bash
+docker compose up -d --force-recreate caddy
+```
+
+For later app or worker image updates, pull both repos and rebuild:
+
+```bash
+cd ~/records-admin && git checkout main && git pull
+cd ~/intake-form && git checkout main && git pull
 cd ~/intake-form/deploy
 docker compose build intake
 docker compose build records-admin
@@ -350,6 +365,7 @@ Volumes keep the SQLite databases, uploads, Ollama models, and Caddy certificate
 
 ## Version history
 
+- 0.5.1 — Remove Caddy tester `basic_auth` from the public intake form and records-admin HTTPS sites for the test period. `/admin` and records-admin app logins are unchanged.
 - 0.5.0 — Bind localhost by default, require a strong production admin password, Secure cookies and CORS for HTTPS, serve web+API with `pnpm start`, and deploy on Azure with Docker Compose + Caddy.
 - 0.4.0 — LLM maps queued submissions into pending entry requests. An admin verifies them in the records-admin web UI through Playwright, or rejects them.
 - 0.3.0 — Queue verified submissions and send them to records-admin through a local Ollama worker.
